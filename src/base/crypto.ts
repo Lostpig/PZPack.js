@@ -17,7 +17,7 @@ export interface PZCrypto {
    * @returns 返回总写入大小
    */
   encryptFile: (option: CryptoStreamOption) => number
-    /**
+  /**
    * @returns 返回总写入大小
    */
   encryptFileAsync: (option: CryptoStreamOptionAysnc) => Promise<number>
@@ -38,7 +38,6 @@ export interface CryptoStreamOptionAysnc extends CryptoStreamOption {
   frequency?: number
   canceled: CancelToken
 }
-
 
 // 加密算法固定
 // AES-256-CBC PKCS7 加密

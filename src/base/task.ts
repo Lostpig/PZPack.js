@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks'
 import type { ProgressReporter } from './common'
 
 interface TaskCompleteReport<T> {
-  value?: T,
+  value?: T
   isCanceled: boolean
 }
 interface TaskRefs<T> {
@@ -79,7 +79,7 @@ const create = <T>(frequency: number = 0): [AsyncTask<T>, CancelToken] => {
   const cancelToken = {
     get value() {
       return context.refs.canceled
-    }
+    },
   }
 
   return [task, cancelToken]
@@ -106,7 +106,7 @@ const complete = <T>(task: AsyncTask<T>, value?: T) => {
   if (context && !context.refs.completed) {
     context.refs.success({
       value,
-      isCanceled: context.refs.canceled
+      isCanceled: context.refs.canceled,
     })
     context.refs.completed = true
   }

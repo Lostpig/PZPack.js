@@ -12,7 +12,7 @@ import {
   type BuildingFile,
 } from './base/indices'
 import { ensureDir, fsCloseAsync, fsOpenAsync, fsWriteAsync } from './base/utils'
-import { AsyncTask, CancelToken, taskManager } from './base/task'
+import { taskManager, type AsyncTask, type CancelToken } from './base/task'
 import { FileAlreadyExistsError } from './base/exceptions'
 
 export interface BuildProgress {
@@ -67,7 +67,7 @@ export class PZBuilder {
     await fsWriteAsync(fd, this.crypto.passwordHash, 0, 32, 36)
   }
   private async writePZInfo(fd: number) {
-    let descBuf = this.description.length > 0 ? Buffer.from(this.description, 'utf8') : undefined
+    const descBuf = this.description.length > 0 ? Buffer.from(this.description, 'utf8') : undefined
     const descLength = descBuf ? descBuf.length : 0
 
     const infoBuf = Buffer.alloc(descLength + 8)
@@ -243,5 +243,5 @@ const scanDirectorySync = (dir: string) => {
 
 export const helper = {
   scanDirectory,
-  scanDirectorySync
+  scanDirectorySync,
 }
