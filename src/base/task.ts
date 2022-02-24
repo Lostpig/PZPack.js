@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks'
 import type { ProgressReporter } from './common'
 
 interface TaskCompleteReport<T> {
@@ -11,6 +12,8 @@ interface TaskRefs<T> {
   completed: boolean
 }
 interface TaskContext<T> {
+  frequency: number
+  lastReportTime: number
   reporters: Set<ProgressReporter<T>>
   refs: TaskRefs<T>
 }
@@ -56,7 +59,7 @@ class AsyncTask<T> {
   }
 }
 
-const create = <T>(): [AsyncTask<T>, CancelToken] => {
+const create = <T>(frequency: number = 0): [AsyncTask<T>, CancelToken] => {
   const refs = { canceled: false, completed: false } as TaskRefs<T>
   const completePromise = new Promise<TaskCompleteReport<T>>((res, rej) => {
     refs.success = res
@@ -64,6 +67,8 @@ const create = <T>(): [AsyncTask<T>, CancelToken] => {
   })
 
   const context: TaskContext<T> = {
+    frequency,
+    lastReportTime: 0,
     reporters: new Set<ProgressReporter<T>>(),
     refs,
   }
@@ -82,7 +87,11 @@ const create = <T>(): [AsyncTask<T>, CancelToken] => {
 const postReport = <T>(task: AsyncTask<T>, value: T) => {
   const context = store.get(task) as TaskContext<T>
   if (context) {
+    const now = performance.now()
+    if (now - context.lastReportTime < context.frequency) return
+
     context.reporters.forEach((p) => p(value))
+    context.lastReportTime = now
   }
 }
 const throwError = <T>(task: AsyncTask<T>, err?: Error) => {
@@ -109,4 +118,5 @@ export const taskManager = {
   throwError,
   complete,
 }
+
 export type { AsyncTask }

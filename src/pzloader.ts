@@ -1,8 +1,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { performance } from 'node:perf_hooks'
-import { isCompatible, getSignHash, type ProgressReporter } from './base/common'
-import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync } from './base/utils'
+import { isCompatible, getSignHashHex, headLength, type ProgressReporter } from './base/common'
+import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync, fsReadAsync } from './base/utils'
 import { getPZCrypto, type PZCrypto } from './base/crypto'
 import {
   NotSupportedVersionError,
@@ -30,7 +30,7 @@ export interface ExtractProgress {
   totalSize: number
 }
 
-class PZHandle {
+class PZLoader {
   private _version?: number
   private _fd?: number
   private _fileStat?: fs.Stats
@@ -71,7 +71,7 @@ class PZHandle {
     fs.readSync(this.fd, tempBuffer, 0, 32, 4)
 
     const signHex = bytesToHex(tempBuffer)
-    const innerSignHex = getSignHash()
+    const innerSignHex = getSignHashHex()
     if (signHex !== innerSignHex) {
       throw new NotSupportedFileTypeError()
     }
@@ -93,11 +93,11 @@ class PZHandle {
   loadIndex() {
     if (!this._indexCache) {
       const infoLengthBuf = Buffer.alloc(4)
-      fs.readSync(this.fd, infoLengthBuf, { position: 68, offset: 0, length: 4 })
+      fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
       const infoLength = infoLengthBuf.readInt32LE()
 
       const indexOffsetBuf = Buffer.alloc(8)
-      fs.readSync(this.fd, indexOffsetBuf, { position: 72 + infoLength, offset: 0, length: 8 })
+      fs.readSync(this.fd, indexOffsetBuf, { position: headLength + infoLength + 4, offset: 0, length: 8 })
       const indexOffset = Number(indexOffsetBuf.readBigInt64LE())
       const indexSize = this.fileStat.size - indexOffset
 
@@ -115,11 +115,11 @@ class PZHandle {
     if (this._description !== undefined) return this._description
 
     const infoLengthBuf = Buffer.alloc(4)
-    fs.readSync(this.fd, infoLengthBuf, { position: 68, offset: 0, length: 4 })
+    fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
     const infoLength = infoLengthBuf.readInt32LE()
 
     const encryptInfoBuf = Buffer.alloc(infoLength)
-    fs.readSync(this.fd, encryptInfoBuf, { position: 72, offset: 0, length: infoLength })
+    fs.readSync(this.fd, encryptInfoBuf, { position: headLength + 4, offset: 0, length: infoLength })
 
     const infoBuf = this.crypto.decrypt(encryptInfoBuf)
     const descLength = infoBuf.readInt32LE()
@@ -139,6 +139,14 @@ class PZHandle {
 
     return buf
   }
+  async loadFileAsync(file: PZFile) {
+    const encryptBuf = Buffer.alloc(file.size)
+    await fsReadAsync(this.fd, encryptBuf, { position: file.offset, offset: 0, length: file.size })
+    const buf = this.crypto.decrypt(encryptBuf)
+
+    return buf
+  }
+
   extractFile(file: PZFile, target: string, progress?: ProgressReporter<number>) {
     const targetExists = fs.existsSync(target)
     if (targetExists) {
@@ -264,7 +272,7 @@ class PZHandle {
 
     const indices = this.loadIndex()
     const files = indices.getAllFiles()
-   
+
     const [task, cancelToken] = taskManager.create<ExtractProgress>()
 
     const progressCache: ExtractProgress = {
@@ -273,7 +281,7 @@ class PZHandle {
       extractSize: 0,
       totalSize: this.statisticExtractSize(files),
       extractCount: 0,
-      totalCount: files.length
+      totalCount: files.length,
     }
     const progressReport = (p: number) => {
       progressCache.current = p
@@ -319,10 +327,12 @@ class PZHandle {
 
     exec()
       .then(() => {
-        const completeReport = cancelToken.value ? {
-          ...progressCache,
-          extractSize: progressCache.extractSize + progressCache.current,
-        }: progressCache
+        const completeReport = cancelToken.value
+          ? {
+              ...progressCache,
+              extractSize: progressCache.extractSize + progressCache.current,
+            }
+          : progressCache
 
         taskManager.complete(task, completeReport)
       })
@@ -340,6 +350,6 @@ class PZHandle {
 }
 
 export const OpenPzFile = (filename: string, password: string) => {
-  const pzHandle = new PZHandle(filename, password)
+  const pzHandle = new PZLoader(filename, password)
   return pzHandle
 }

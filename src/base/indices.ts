@@ -19,7 +19,7 @@ export const createPZFolder = (name: string, id: number, pid: number): PZFolder 
   return { name, id, pid }
 }
 
-export class PZIndex {
+class PZIndex {
   private _root: PZFolder
   private folderChildren: Map<number, PZFolder[]>
   private fileChildren: Map<number, PZFile[]>
@@ -89,7 +89,9 @@ export class PZIndex {
     return [...this.files]
   }
   getFolderPath(folderId: number): string {
-    if (folderId === folderRootId) { return "" }
+    if (folderId === folderRootId) {
+      return ''
+    }
 
     const folder = this.foldersMap.get(folderId)
     if (!folder) {
@@ -102,7 +104,7 @@ export class PZIndex {
       return path.join(this.getFolderPath(folder.pid), folder.name)
     }
   }
-  getFullName (file: PZFile) {
+  getFullName(file: PZFile) {
     let fullname = this.fullnameCache.get(file)
     if (!fullname) {
       const folderPath = this.getFolderPath(file.folderId)
@@ -115,6 +117,88 @@ export class PZIndex {
   }
 }
 
+export interface BuildingFile {
+  folderId: number
+  source: string
+  name: string
+  size: number
+}
+export class PZIndexBuilder {
+  private _root: PZFolder
+  private foldersCache: Map<string, PZFolder>
+  private foldersMap: Map<number, PZFolder[]>
+  private filesMap: Map<number, BuildingFile[]>
+  private idCounter: () => number
+
+  constructor() {
+    this._root = createPZFolder('root', folderRootId, 0)
+
+    this.foldersMap = new Map()
+    this.foldersCache = new Map()
+    this.filesMap = new Map()
+
+    let idc = folderRootId + 1
+    this.idCounter = () => idc++
+  }
+
+  private newFolder(name: string, parent: PZFolder) {
+    const id = this.idCounter()
+    const folder = createPZFolder(name, id, parent.id)
+
+    let list = this.foldersMap.get(parent.id)
+    if (!list) {
+      list = []
+      this.foldersMap.set(parent.id, list)
+    }
+    list.push(folder)
+
+    return folder
+  }
+  private ensureFolder(folderPath: string): PZFolder {
+    const fp = folderPath.replace(/\\/gm, '/')
+    if (fp === '' || fp === '/') {
+      return this._root
+    }
+
+    let folder = this.foldersCache.get(fp)
+    if (!folder) {
+      const p = path.parse(fp)
+      const parent = this.ensureFolder(p.dir)
+      folder = this.newFolder(p.name, parent)
+      this.foldersCache.set(fp, folder)
+    }
+
+    return folder
+  }
+
+  addBuildingFile(source: string, rename: string) {
+    const renameObj = path.parse(rename)
+    const folder = this.ensureFolder(renameObj.dir)
+
+    let list = this.filesMap.get(folder.id)
+    if (!list) {
+      list = []
+      this.filesMap.set(folder.id, list)
+    }
+
+    if (list.some((f) => f.name === renameObj.base)) {
+      throw new Error(`PZBuilder add file failed: filename "${rename}" is already exists`)
+    }
+
+    list.push({
+      name: renameObj.base,
+      folderId: folder.id,
+      source,
+      size: 0,
+    })
+  }
+  getBuildingFiles() {
+    return (<BuildingFile[]>[]).concat(...Array.from(this.filesMap.values()))
+  }
+  getFolders() {
+    return (<PZFolder[]>[]).concat(...Array.from(this.foldersMap.values()))
+  }
+}
 
 const decodeFileCurrent = (buf: Buffer, position: number, length: number) => {
   const folderId = buf.readInt32LE(position)
@@ -182,6 +266,42 @@ const decodeFolderPart = (buf: Buffer) => {
   return folders
 }
 
+const encodeFile = (file: PZFile) => {
+  const nameBuf = Buffer.from(file.name, 'utf8')
+  const tempBuf = Buffer.alloc(24)
+  const fullLength = nameBuf.length + 20
+  tempBuf.writeInt32LE(fullLength, 0)
+  tempBuf.writeInt32LE(file.folderId, 4)
+  tempBuf.writeBigInt64LE(BigInt(file.offset), 8)
+  tempBuf.writeBigInt64LE(BigInt(file.size), 16)
+
+  return Buffer.concat([tempBuf, nameBuf])
+}
+const encodeFilePart = (files: PZFile[]) => {
+  const fileBytes: Uint8Array[] = []
+  for (const f of files) {
+    fileBytes.push(encodeFile(f))
+  }
+  return Buffer.concat(fileBytes)
+}
+const encodeFolder = (folder: PZFolder) => {
+  const nameBuf = Buffer.from(folder.name, 'utf8')
+  const tempBuf = Buffer.alloc(12)
+  const fullLength = nameBuf.length + 8
+  tempBuf.writeInt32LE(fullLength, 0)
+  tempBuf.writeInt32LE(folder.id, 4)
+  tempBuf.writeInt32LE(folder.pid, 8)
+
+  return Buffer.concat([tempBuf, nameBuf])
+}
+const encodeFolderPart = (folders: PZFolder[]) => {
+  const folderBytes: Uint8Array[] = []
+  for (const f of folders) {
+    folderBytes.push(encodeFolder(f))
+  }
+  return Buffer.concat(folderBytes)
+}
+
 export const decodePZIndex = (buf: Buffer, version: number) => {
   const folderPartSize = buf.readInt32LE(0)
   const filePartSize = buf.readInt32LE(4)
@@ -194,3 +314,14 @@ export const decodePZIndex = (buf: Buffer, version: number) => {
 
   return new PZIndex(files, folders)
 }
+export const encodePZIndex = (files: PZFile[], folders: PZFolder[]) => {
+  const fileBytes = encodeFilePart(files)
+  const folderBytes = encodeFolderPart(folders)
+
+  const lenBuf = Buffer.alloc(8)
+  lenBuf.writeInt32LE(folderBytes.length, 0)
+  lenBuf.writeInt32LE(fileBytes.length, 4)
+
+  return Buffer.concat([lenBuf, folderBytes, fileBytes])
+}
+export type { PZIndex }

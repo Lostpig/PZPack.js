@@ -7,8 +7,9 @@
     "lint": "eslint --cache --ext .ts --format=pretty ./src",
     "lint:prettier": "prettier -c ./src/**/*",
     "prettier": "prettier --write ./src/**/*",
-    "test": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.ts",
-    "test:ex": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/ntest.ts"
+    "test:ex": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.extract.ts",
+    "test:bu": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.build.ts",
+    "test:lo": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.load.ts"
   },
   "author": "",
   "license": "ISC",
