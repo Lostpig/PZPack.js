@@ -1,14 +1,14 @@
 {
   "compileOnSave": false,
   "compilerOptions": {
-    "baseUrl": "./",
+    "baseUrl": "./src",
     "outDir": "./dist",
     "forceConsistentCasingInFileNames": true,
     "strict": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-    "sourceMap": true,
+    "sourceMap": false,
     "declaration": true,
     "experimentalDecorators": true,
     "downlevelIteration": false,
@@ -22,9 +22,7 @@
     ],
     "lib": [
       "es2020"
-    ],
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
+    ]
+  },
+  "include": ["src/**/*"],
 }

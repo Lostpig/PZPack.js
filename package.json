@@ -1,8 +1,11 @@
 {
   "name": "pzpack",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "",
-  "main": "index.js",
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "lint": "eslint --cache --ext .ts --format=pretty ./src",
     "lint:prettier": "prettier -c ./src/**/*",

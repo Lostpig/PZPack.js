@@ -1,4 +1,4 @@
-import { Dayjs } from 'dayjs'
+import { default as dayjs } from 'dayjs'
 import * as fsp from 'fs/promises'
 
 enum LogLevel {
@@ -17,7 +17,7 @@ const levelPrefix: Record<LogLevel, string> = {
 }
 const timePrefix = {
   get now () {
-    return (new Dayjs()).format('[YYYY-MM-DD HH:mm:ss.SSS]')
+    return dayjs().format('[YYYY-MM-DD HH:mm:ss.SSS]')
   } 
 }
 

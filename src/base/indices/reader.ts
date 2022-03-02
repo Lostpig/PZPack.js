@@ -90,8 +90,6 @@ export class PZIndexReader {
     while (position < buf.length) {
       const length = buf.readInt32LE(position)
       const [id, pid, name] = decodeFolder(buf, position + 4, length)
-      if (id === folderRootId) continue
-
       tempMap.set(id, [id, pid, name])
       position += 4 + length
     }
@@ -156,15 +154,26 @@ export class PZIndexReader {
     return childern
   }
   getAllFiles() {
+    return this.getFilesDeep(this.root)
+  }
+  getFilesDeep(folder: PZFolder) {
     const files: PZFilePacked[] = []
 
-    for (const [, f] of this.foldersMap) {
+    const findFiles = (f: PZFolder) => {
       const c = this.folderChildrenMap.get(f)
       if (c) {
         files.push(...c.files)
+        for(const childFolder of c.folders) {
+          findFiles(childFolder)
+        }
       }
     }
+    findFiles(folder)
 
     return files
+  }
+  resolvePath(file: PZFilePacked, folder: PZFolder) {
+    const p = path.relative(folder.fullname, file.fullname)
+    return path.join(folder.name, p)
   }
 }

@@ -84,7 +84,7 @@ export class PZBuilder {
     await fsWriteAsync(fd, encryptBuf, 0, encryptBuf.length, position)
     return encryptBuf.length
   }
-  private async execBuild(fd: number, tasks: [AsyncTask<BuildProgress>, CancelToken, BuildProgress]) {
+  private async execBuild(fd: number, tasks: [AsyncTask<BuildProgress>, CancelToken, BuildProgress], frequency?: number) {
     await this.writePZHead(fd)
     const infoPartLength = await this.writePZInfo(fd)
     const indexOffsetPos = headLength + infoPartLength
@@ -124,6 +124,7 @@ export class PZBuilder {
         position: 0,
         canceled: cancelToken,
         progress: progressReport,
+        frequency
       })
       await fsCloseAsync(sourceFd)
       fileComplete(f)
@@ -144,7 +145,7 @@ export class PZBuilder {
       await this.writeIndices(fd, positon, indexEncoder)
     }
   }
-  buildTo(target: string) {
+  buildTo(target: string, frequency?: number) {
     const fileExists = fs.existsSync(target)
     if (fileExists) {
       throw new FileAlreadyExistsError()
@@ -162,9 +163,9 @@ export class PZBuilder {
       count: [0, 1],
       total: [0, 1],
     }
-    const [task, cancelToken] = taskManager.create<BuildProgress>(333)
+    const [task, cancelToken] = taskManager.create<BuildProgress>(100)
     taskManager.postReport(task, progressCache)
-    this.execBuild(fd, [task, cancelToken, progressCache])
+    this.execBuild(fd, [task, cancelToken, progressCache], frequency)
       .then(() => {
         progressCache.phase = 'complete'
         taskManager.postReport(task, progressCache)

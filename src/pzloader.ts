@@ -10,7 +10,7 @@ import {
   IncorrectPasswordError,
   FileAlreadyExistsError,
 } from './base/exceptions'
-import { PZIndexReader, type PZFilePacked } from './base/indices'
+import { PZIndexReader, type PZFilePacked, type PZFolder } from './base/indices'
 import { taskManager } from './base/task'
 
 export interface ExtractProgress {
@@ -176,7 +176,6 @@ class PZLoader {
 
     fs.closeSync(targetFd)
   }
-
   private statisticExtractSize(files: PZFilePacked[]) {
     let sumSize = 0
     for (const f of files) {
@@ -185,10 +184,14 @@ class PZLoader {
     return sumSize
   }
   extractAll(targetDir: string, progress?: ProgressReporter<ExtractProgress>) {
+    const indices = this.loadIndex()
+    return this.extractFolder(indices.root, targetDir, progress)
+  }
+  extractFolder(folder: PZFolder, targetDir: string, progress?: ProgressReporter<ExtractProgress>) {
     ensureEmptyDir(targetDir)
 
     const indices = this.loadIndex()
-    const files = indices.getAllFiles()
+    const files = indices.getFilesDeep(folder)
     const totalSize = this.statisticExtractSize(files)
     const totalCount = files.length
 
@@ -215,7 +218,8 @@ class PZLoader {
     }
 
     for (const file of files) {
-      const outputPath = path.join(targetDir, file.fullname)
+      const rpath = indices.resolvePath(file, folder)
+      const outputPath = path.join(targetDir, rpath)
 
       fileStart(file)
       this.extractFile(file, outputPath, progressReport)
@@ -268,10 +272,14 @@ class PZLoader {
     return task
   }
   extractAllAsync(targetDir: string, frequency?: number) {
+    const indices = this.loadIndex()
+    return this.extractFolderAsync(indices.root, targetDir, frequency)
+  }
+  extractFolderAsync(folder: PZFolder, targetDir: string, frequency?: number) {
     ensureEmptyDir(targetDir)
 
     const indices = this.loadIndex()
-    const files = indices.getAllFiles()
+    const files = indices.getFilesDeep(folder)
 
     const [task, cancelToken] = taskManager.create<ExtractProgress>()
 
@@ -301,7 +309,8 @@ class PZLoader {
 
     const exec = async () => {
       for (const file of files) {
-        const outputPath = path.join(targetDir, file.fullname)
+        const rpath = indices.resolvePath(file, folder)
+        const outputPath = path.join(targetDir, rpath)
         ensureDir(path.parse(outputPath).dir)
         const targetFd = await fsOpenAsync(outputPath, 'w')
 
