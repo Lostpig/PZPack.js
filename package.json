@@ -1,6 +1,6 @@
 {
   "name": "pzpack",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "",
   "main": "index.js",
   "scripts": {
@@ -29,5 +29,8 @@
     "prettier": "^2.5.1",
     "ts-node": "^10.4.0",
     "typescript": "^4.5.5"
+  },
+  "dependencies": {
+    "dayjs": "^1.10.8"
   }
 }

@@ -10,7 +10,7 @@ import {
   IncorrectPasswordError,
   FileAlreadyExistsError,
 } from './base/exceptions'
-import { decodePZIndex, type PZIndex, type PZFile } from './base/indices'
+import { PZIndexReader, type PZFilePacked } from './base/indices'
 import { taskManager } from './base/task'
 
 export interface ExtractProgress {
@@ -89,7 +89,7 @@ class PZLoader {
     this.checkFile()
   }
 
-  private _indexCache?: PZIndex
+  private _indexCache?: PZIndexReader
   loadIndex() {
     if (!this._indexCache) {
       const infoLengthBuf = Buffer.alloc(4)
@@ -105,7 +105,8 @@ class PZLoader {
       fs.readSync(this.fd, indexEncryptBuf, { position: indexOffset, offset: 0, length: indexSize })
       const indexBuf = this.crypto.decrypt(indexEncryptBuf)
 
-      this._indexCache = decodePZIndex(indexBuf, this.version)
+      this._indexCache = new PZIndexReader()
+      this._indexCache.decode(indexBuf, this.version)
     }
 
     return this._indexCache
@@ -132,14 +133,14 @@ class PZLoader {
     return this._description
   }
 
-  loadFile(file: PZFile) {
+  loadFile(file: PZFilePacked) {
     const encryptBuf = Buffer.alloc(file.size)
     fs.readSync(this.fd, encryptBuf, { position: file.offset, offset: 0, length: file.size })
     const buf = this.crypto.decrypt(encryptBuf)
 
     return buf
   }
-  async loadFileAsync(file: PZFile) {
+  async loadFileAsync(file: PZFilePacked) {
     const encryptBuf = Buffer.alloc(file.size)
     await fsReadAsync(this.fd, encryptBuf, { position: file.offset, offset: 0, length: file.size })
     const buf = this.crypto.decrypt(encryptBuf)
@@ -147,7 +148,7 @@ class PZLoader {
     return buf
   }
 
-  extractFile(file: PZFile, target: string, progress?: ProgressReporter<number>) {
+  extractFile(file: PZFilePacked, target: string, progress?: ProgressReporter<number>) {
     const targetExists = fs.existsSync(target)
     if (targetExists) {
       throw new FileAlreadyExistsError()
@@ -176,7 +177,7 @@ class PZLoader {
     fs.closeSync(targetFd)
   }
 
-  private statisticExtractSize(files: PZFile[]) {
+  private statisticExtractSize(files: PZFilePacked[]) {
     let sumSize = 0
     for (const f of files) {
       sumSize += f.size
@@ -204,18 +205,17 @@ class PZLoader {
         totalCount,
       })
     }
-    const fileComplete = (f: PZFile) => {
+    const fileComplete = (f: PZFilePacked) => {
       totalCache.count += 1
       totalCache.size += f.size
     }
-    const fileStart = (f: PZFile) => {
+    const fileStart = (f: PZFilePacked) => {
       fileCache.current = 0
       fileCache.total = f.size
     }
 
     for (const file of files) {
-      const fullname = indices.getFullName(file)
-      const outputPath = path.join(targetDir, fullname)
+      const outputPath = path.join(targetDir, file.fullname)
 
       fileStart(file)
       this.extractFile(file, outputPath, progressReport)
@@ -233,7 +233,7 @@ class PZLoader {
   }
 
   // async methods
-  extractFileAsync(file: PZFile, target: string, frequency?: number) {
+  extractFileAsync(file: PZFilePacked, target: string, frequency?: number) {
     const targetExists = fs.existsSync(target)
     if (targetExists) {
       throw new FileAlreadyExistsError()
@@ -290,19 +290,18 @@ class PZLoader {
         extractSize: progressCache.extractSize + progressCache.current,
       })
     }
-    const fileComplete = (f: PZFile) => {
+    const fileComplete = (f: PZFilePacked) => {
       progressCache.extractCount += 1
       progressCache.extractSize += f.size
     }
-    const fileStart = (f: PZFile) => {
+    const fileStart = (f: PZFilePacked) => {
       progressCache.current = 0
       progressCache.currentSize = f.size
     }
 
     const exec = async () => {
       for (const file of files) {
-        const fullname = indices.getFullName(file)
-        const outputPath = path.join(targetDir, fullname)
+        const outputPath = path.join(targetDir, file.fullname)
         ensureDir(path.parse(outputPath).dir)
         const targetFd = await fsOpenAsync(outputPath, 'w')
 

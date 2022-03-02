@@ -3,14 +3,7 @@ import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import { currentVersion, getSignHash, headLength } from './base/common'
 import { getPZCrypto, type PZCrypto } from './base/crypto'
-import {
-  PZIndexBuilder,
-  createPZFile,
-  encodePZIndex,
-  type PZFolder,
-  type PZFile,
-  type BuildingFile,
-} from './base/indices'
+import { PZIndexEncoder, type PZIndexBuilder, type PZFileBuilding } from './base/indices'
 import { ensureDir, fsCloseAsync, fsOpenAsync, fsWriteAsync } from './base/utils'
 import { taskManager, type AsyncTask, type CancelToken } from './base/task'
 import { FileAlreadyExistsError } from './base/exceptions'
@@ -23,19 +16,19 @@ export interface BuildProgress {
 }
 
 export class PZBuilder {
-  readonly indexBuilder: PZIndexBuilder
+  private indexBuilder: PZIndexBuilder
   private crypto: PZCrypto
   private description = ''
-  constructor(password: string) {
+  constructor(password: string, indexBuilder: PZIndexBuilder) {
+    this.indexBuilder = indexBuilder
     this.crypto = getPZCrypto(password, currentVersion)
-    this.indexBuilder = new PZIndexBuilder()
   }
   setDescription(description: string) {
     this.description = description
   }
 
   private async ensureFiles() {
-    const files = this.indexBuilder.getBuildingFiles()
+    const files = this.indexBuilder.getAllFiles()
     let totalSize = 0
 
     for (const f of files) {
@@ -43,7 +36,6 @@ export class PZBuilder {
       if (!fstat.isFile()) {
         throw new Error(`PZBuilder error: source file "${f.source}" not found`)
       }
-      f.size = fstat.size
       totalSize += f.size
     }
 
@@ -85,14 +77,14 @@ export class PZBuilder {
 
     return encryptBuf.length + 4
   }
-  private async writeIndices(fd: number, position: number, files: PZFile[], folders: PZFolder[]) {
-    const indicesBuf = encodePZIndex(files, folders)
+  private async writeIndices(fd: number, position: number, encoder: PZIndexEncoder) {
+    const indicesBuf = encoder.encode()
     const encryptBuf = this.crypto.encrypt(indicesBuf)
 
     await fsWriteAsync(fd, encryptBuf, 0, encryptBuf.length, position)
     return encryptBuf.length
   }
-  async execBuild(fd: number, tasks: [AsyncTask<BuildProgress>, CancelToken, BuildProgress]) {
+  private async execBuild(fd: number, tasks: [AsyncTask<BuildProgress>, CancelToken, BuildProgress]) {
     await this.writePZHead(fd)
     const infoPartLength = await this.writePZInfo(fd)
     const indexOffsetPos = headLength + infoPartLength
@@ -112,15 +104,15 @@ export class PZBuilder {
         total: [t0 + p, t1],
       })
     }
-    const fileComplete = (f: BuildingFile) => {
+    const fileComplete = (f: PZFileBuilding) => {
       cache.count[0] += 1
       cache.total[0] += f.size
     }
-    const fileStart = (f: BuildingFile) => {
+    const fileStart = (f: PZFileBuilding) => {
       cache.current = [0, f.size]
     }
 
-    const pzFiles: PZFile[] = []
+    const indexEncoder = new PZIndexEncoder(this.indexBuilder)
     for (const f of files) {
       fileStart(f)
       const sourceFd = await fsOpenAsync(f.source, 'r')
@@ -135,8 +127,8 @@ export class PZBuilder {
       })
       await fsCloseAsync(sourceFd)
       fileComplete(f)
-      const pzFile = createPZFile(f.name, f.folderId, positon, written)
-      pzFiles.push(pzFile)
+
+      indexEncoder.addFile(f, positon, written)
 
       positon += written
       if (cancelToken.value) {
@@ -149,8 +141,7 @@ export class PZBuilder {
       indexOffsetBuf.writeBigInt64LE(BigInt(positon))
       await fsWriteAsync(fd, indexOffsetBuf, 0, 8, indexOffsetPos)
 
-      const folders = this.indexBuilder.getFolders()
-      await this.writeIndices(fd, positon, pzFiles, folders)
+      await this.writeIndices(fd, positon, indexEncoder)
     }
   }
   buildTo(target: string) {
@@ -198,50 +189,3 @@ export class PZBuilder {
   }
 }
 
-const scanDirectory = async (dir: string) => {
-  const dirs = [dir]
-  const files: string[] = []
-
-  while (dirs.length > 0) {
-    const d = dirs.pop()!
-    const list = await fsp.readdir(d)
-    for (const f of list) {
-      const fullname = path.join(d, f)
-      const stats = await fsp.stat(fullname)
-      if (stats.isDirectory()) {
-        dirs.push(fullname)
-      }
-      if (stats.isFile()) {
-        files.push(fullname)
-      }
-    }
-  }
-
-  return files
-}
-const scanDirectorySync = (dir: string) => {
-  const dirs = [dir]
-  const files: string[] = []
-
-  while (dirs.length > 0) {
-    const d = dirs.pop()!
-    const list = fs.readdirSync(d)
-    for (const f of list) {
-      const fullname = path.join(d, f)
-      const stats = fs.statSync(fullname)
-      if (stats.isDirectory()) {
-        dirs.push(fullname)
-      }
-      if (stats.isFile()) {
-        files.push(fullname)
-      }
-    }
-  }
-
-  return files
-}
-
-export const helper = {
-  scanDirectory,
-  scanDirectorySync,
-}

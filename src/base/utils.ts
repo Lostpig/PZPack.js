@@ -84,3 +84,6 @@ export const wait = (ms: number) => {
     setTimeout(res, ms)
   })
 }
+export const nextTick = () => {
+  return wait(0)
+}

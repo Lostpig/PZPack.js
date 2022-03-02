@@ -1,21 +1,23 @@
-type Subscription = {
+import { logger } from './logger'
+
+export type Subscription = {
   closed: boolean
   unsubscribe: () => void
 }
-type NotifyHandle<T> = {
+export type NotifyHandle<T> = {
   next: (param: T) => void
   error?: (e: Error) => void
   complete?: () => void
   subscription: Subscription
 }
-interface PZObservable<T> {
+export interface PZObservable<T> {
   closed: boolean
   status: 'active' | 'error' | 'complete'
   subscribe: (next: (param: T) => void, err?: (e: Error) => void, complete?: () => void) => Subscription
 }
 
 const closedUnsubscribeFunc = () => {
-  console.warn('this subscription is already closed')
+  logger.warning('this subscription is already closed')
 }
 export class PZNotify<T> implements PZObservable<T> {
   handles = new Map<symbol, NotifyHandle<T>>()
