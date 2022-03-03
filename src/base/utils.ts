@@ -1,4 +1,6 @@
 import * as fs from 'fs'
+import * as fsp from 'fs/promises'
+import * as path from 'path'
 
 export const bytesToHex = (buf: Buffer) => {
   return buf.toString('hex').toUpperCase()
@@ -16,18 +18,29 @@ const checkDirExists = (dir: string) => {
 }
 export const ensureDir = (dir: string) => {
   if (!checkDirExists(dir)) {
-    fs.mkdirSync(dir)
+    fs.mkdirSync(dir, { recursive: true })
   }
 }
 export const ensureEmptyDir = (dir: string) => {
   if (!checkDirExists(dir)) {
-    fs.mkdirSync(dir)
+    fs.mkdirSync(dir, { recursive: true })
   } else {
     const children = fs.readdirSync(dir)
     if (children && children.length > 0) {
       throw new Error(`Path ${dir} is already exists and not empty`)
     }
   }
+}
+
+export const fspEnsureOpenFile = async (file: string, flag: string = 'w+') => {
+  let stats
+  try {
+    stats = await fsp.stat(file)
+  } catch {}
+  if (!(stats && stats.isFile())) {
+    ensureDir(path.dirname(file))
+  }
+  return await fsp.open(file, flag)
 }
 
 export const fsReadAsync = (fd: number, buffer: Buffer, options: Required<fs.ReadSyncOptions>) => {
