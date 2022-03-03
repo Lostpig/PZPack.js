@@ -1,12 +1,15 @@
 {
   "name": "pzpack",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "",
-  "main": "dist/index.js",
+  "main": "dist/cjs.js",
+  "module": "dist/esm.js",
+  "types": "dist/types/index.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
+    "build": "rollup -c ./rollup.config.cjs",
     "lint": "eslint --cache --ext .ts --format=pretty ./src",
     "lint:prettier": "prettier -c ./src/**/*",
     "prettier": "prettier --write ./src/**/*",
@@ -16,8 +19,8 @@
   },
   "author": "",
   "license": "ISC",
-  "type": "module",
   "devDependencies": {
+    "@rollup/plugin-typescript": "^8.3.1",
     "@types/node": "^17.0.4",
     "@typescript-eslint/eslint-plugin": "^5.12.0",
     "@typescript-eslint/parser": "^5.12.0",
@@ -30,7 +33,9 @@
     "eslint-plugin-unicorn": "^41.0.0",
     "ora": "^6.0.1",
     "prettier": "^2.5.1",
+    "rollup": "^2.69.0",
     "ts-node": "^10.4.0",
+    "tslib": "^2.3.1",
     "typescript": "^4.5.5"
   },
   "dependencies": {
