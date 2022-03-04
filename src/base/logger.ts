@@ -1,13 +1,14 @@
 import { default as dayjs } from 'dayjs'
-import * as path from 'path'
 import { fspEnsureOpenFile } from './utils'
+import { default as chalk, Chalk } from 'chalk'
+
 
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
   WARNING = 2,
   ERROR = 3,
-  SILENT = 4
+  SILENT = 4,
 }
 const levelPrefix: Record<LogLevel, string> = {
   [LogLevel.DEBUG]: '[DEBUG]',
@@ -17,34 +18,49 @@ const levelPrefix: Record<LogLevel, string> = {
   [LogLevel.SILENT]: '[SILENT]',
 }
 const timePrefix = {
-  get now () {
+  get now() {
     return `[${dayjs().format('YYYY-MM-DD HH:mm:ss.SSS')}]`
-  } 
+  },
+}
+const levelColors: Record<LogLevel, Chalk> = {
+  [LogLevel.DEBUG]: chalk.cyanBright,
+  [LogLevel.INFO]: chalk.white,
+  [LogLevel.WARNING]: chalk.hex('#FFAA03'),
+  [LogLevel.ERROR]: chalk.red,
+  [LogLevel.SILENT]: chalk.black.bgRed,
 }
 
 export class PZLogger {
   consoleLevel: LogLevel = LogLevel.DEBUG
   fileLevel: LogLevel = LogLevel.WARNING
   private filePath?: string
+  private id: string = ''
+  private get idPrefix() {
+    return this.id ? `<${this.id}>` : ''
+  }
 
   private log(level: LogLevel, ...message: string[]) {
     if (level < this.consoleLevel && level < this.fileLevel) return
 
-    const text = [timePrefix.now, levelPrefix[level], ...message].join('')
-    this.consoleLog(level, text)
-    this.fileLog(level, text)
+    const output = levelColors[level]()
+
+    const text = [this.idPrefix, ' ', ...message].join('')
+    const prefix = [timePrefix.now, levelPrefix[level]].join('')
+    this.consoleLog(level, prefix, text)
+    this.fileLog(level, prefix, text)
   }
-  private consoleLog (level: LogLevel, text: string) {
+  private consoleLog(level: LogLevel, prefix: string, text: string) {
     if (level >= this.consoleLevel) {
-      console.log(text)
+      console.log(prefix, levelColors[level](text))
     }
   }
 
   private fileLogging: boolean = false
   private fileLogQueue: string[] = []
-  private fileLog (level: LogLevel, text: string) {
+  private fileLog(level: LogLevel, prefix: string, text: string) {
     if (level >= this.fileLevel && this.filePath) {
-      this.fileLogQueue.push(text + '\n')
+      const data = prefix + ' ' + text + '\n'
+      this.fileLogQueue.push(data)
       this.excuteFileLog()
     }
   }
@@ -61,10 +77,18 @@ export class PZLogger {
     this.fileLogging = false
   }
 
-  get logFileName () {
+  get logFileName() {
     return this.filePath
   }
-  enableFileLog (file: string | false) {
+
+  constructor(id?: string) {
+    this.id = id ?? ''
+  }
+
+  setID(id: string) {
+    this.id = id
+  }
+  enableFileLog(file: string | false) {
     if (file === false) {
       this.filePath = undefined
       return
@@ -85,7 +109,7 @@ export class PZLogger {
   error(...message: string[]) {
     return this.log(LogLevel.ERROR, ...message)
   }
-  errorStack (error: any) {
+  errorStack(error: any) {
     if (!(error instanceof Error)) {
       this.error(String.toString.apply(error))
       return
@@ -93,10 +117,10 @@ export class PZLogger {
 
     this.error(error.message)
     if (error.stack) {
-      this.consoleLog(LogLevel.ERROR, error.stack)
-      this.fileLog(LogLevel.ERROR, error.stack)
+      this.consoleLog(LogLevel.ERROR, '[Error stack]', error.stack)
+      this.fileLog(LogLevel.ERROR, '[Error stack]', error.stack)
     }
   }
 }
 
-export const logger = new PZLogger()
+export const logger = new PZLogger('PZPack')
