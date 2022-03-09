@@ -166,8 +166,9 @@ export class PZIndexBuilder {
     }
 
     const fullname = path.join(toNode.bind.fullname, name)
+    const ext = path.extname(fullname)
     this.removeFile(file)
-    toNode.files.set(name, { name, fullname, pid: toNode.bind.id, size: file.size, source: file.source })
+    toNode.files.set(name, { name, fullname, pid: toNode.bind.id, size: file.size, source: file.source, ext })
 
     this.update()
   }
@@ -226,7 +227,7 @@ export class PZIndexEncoder {
   addFile(bfile: PZFileBuilding, offset: number, size: number) {
     this.ensureFolder(bfile.pid)
 
-    this.files.push({ name: bfile.name, fullname: bfile.fullname, pid: bfile.pid, offset, size })
+    this.files.push({ name: bfile.name, fullname: bfile.fullname, pid: bfile.pid, ext: bfile.ext, offset, size })
   }
   ensureFolder(id: number) {
     if (id === 0 || id === folderRootId) return

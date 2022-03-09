@@ -1,6 +1,7 @@
 export interface PZFileBase {
   readonly name: string
   readonly fullname: string
+  readonly ext: string
   readonly pid: number
   readonly size: number
 }

@@ -2,7 +2,6 @@ import { default as dayjs } from 'dayjs'
 import { fspEnsureOpenFile } from './utils'
 import { default as chalk, Chalk } from 'chalk'
 
-
 export enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -13,7 +12,7 @@ export enum LogLevel {
 const levelPrefix: Record<LogLevel, string> = {
   [LogLevel.DEBUG]: '[DEBUG]',
   [LogLevel.INFO]: '[INFO]',
-  [LogLevel.WARNING]: '[WARING]',
+  [LogLevel.WARNING]: '[WARNING]',
   [LogLevel.ERROR]: '[ERROR]',
   [LogLevel.SILENT]: '[SILENT]',
 }
@@ -42,16 +41,15 @@ export class PZLogger {
   private log(level: LogLevel, ...message: string[]) {
     if (level < this.consoleLevel && level < this.fileLevel) return
 
-    const output = levelColors[level]()
-
-    const text = [this.idPrefix, ' ', ...message].join('')
+    const text = [this.idPrefix, ...message].join(' ')
     const prefix = [timePrefix.now, levelPrefix[level]].join('')
     this.consoleLog(level, prefix, text)
     this.fileLog(level, prefix, text)
   }
   private consoleLog(level: LogLevel, prefix: string, text: string) {
     if (level >= this.consoleLevel) {
-      console.log(prefix, levelColors[level](text))
+      const data = prefix + ' ' + levelColors[level](text)
+      console.log(data)
     }
   }
 

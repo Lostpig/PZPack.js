@@ -55,6 +55,9 @@ class PZLoader {
     }
     return this._fileStat
   }
+  get size () {
+    return this.fileStat.size
+  }
 
   private getVersion() {
     const buf = Buffer.alloc(4)
@@ -361,3 +364,4 @@ export const OpenPzFile = (filename: string, password: string) => {
   const pzHandle = new PZLoader(filename, password)
   return pzHandle
 }
+export type { PZLoader }

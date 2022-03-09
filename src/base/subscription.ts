@@ -15,6 +15,9 @@ export interface PZObservable<T> {
   status: 'active' | 'error' | 'complete'
   subscribe: (next: (param: T) => void, err?: (e: Error) => void, complete?: () => void) => Subscription
 }
+export interface PZBehaviorObservable<T> extends PZObservable<T> {
+  readonly current: T
+}
 
 const closedUnsubscribeFunc = () => {
   logger.warning('this subscription is already closed')
@@ -97,3 +100,27 @@ export class PZNotify<T> implements PZObservable<T> {
     return this as PZObservable<T>
   }
 }
+export class PZBehaviorNotify<T> extends PZNotify<T> {
+  private _currentValue: T
+  get current() {
+    return this._currentValue
+  }
+  constructor(initValue: T) {
+    super()
+    this._currentValue = initValue
+  }
+
+  override next(param: T): void {
+    this._currentValue = param
+    super.next(param)
+  }
+  override subscribe(next: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+    const res = super.subscribe(next, error, complete)
+    super.next(this.current)
+    return res
+  }
+  override asObservable(): PZBehaviorObservable<T> {
+    return this
+  }
+}
+

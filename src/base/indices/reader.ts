@@ -51,7 +51,7 @@ export class PZIndexReader {
   private folderChildrenMap = new WeakMap<PZFolder, PZFolderChildren<PZFilePacked>>()
   private foldersMap = new Map<number, PZFolder>()
   private notify: PZNotify<void> = new PZNotify()
-  get subscriber () {
+  get subscriber() {
     return this.notify.asObservable()
   }
 
@@ -80,8 +80,9 @@ export class PZIndexReader {
     }
     const c = this.getChildren(folder)
     const fullname = path.join(folder.fullname, name)
+    const ext = path.extname(fullname)
 
-    c.files.push({ name, fullname, pid, offset, size })
+    c.files.push({ name, fullname, pid, offset, size, ext })
   }
   private decodeFolders(buf: Buffer) {
     const tempMap = new Map<number, [number, number, string]>()
@@ -163,7 +164,7 @@ export class PZIndexReader {
       const c = this.folderChildrenMap.get(f)
       if (c) {
         files.push(...c.files)
-        for(const childFolder of c.folders) {
+        for (const childFolder of c.folders) {
           findFiles(childFolder)
         }
       }
@@ -175,5 +176,17 @@ export class PZIndexReader {
   resolvePath(file: PZFilePacked, folder: PZFolder) {
     const p = path.relative(folder.fullname, file.fullname)
     return path.join(folder.name, p)
+  }
+  getFoldersToRoot(folder: PZFolder) {
+    const list = []
+    list.push(folder)
+
+    let parent = this.getFolder(folder.pid)
+    while (parent) {
+      list.push(parent)
+      parent = this.getFolder(parent.pid)
+    }
+
+    return list.reverse()
   }
 }
