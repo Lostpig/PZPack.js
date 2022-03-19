@@ -2,7 +2,7 @@ import * as fs from 'fs'
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
 import { sha256, sha256Hex } from './hash'
 import { bytesToHex, fsReadAsync, fsWriteAsync, wait } from './utils'
-import { currentVersion, type ProgressReporter } from './common'
+import { type ProgressReporter } from './common'
 import type { CancelToken } from './task'
 
 export interface PZCrypto {
@@ -49,10 +49,21 @@ class PZCryptoBase {
   pwHash: Buffer
   pwHashHex: string
 
-  constructor(password: string) {
-    this.key = sha256(password)
-    this.pwHash = sha256(sha256Hex(this.key))
-    this.pwHashHex = bytesToHex(this.pwHash)
+  static createKey (password: string) {
+    const key = sha256(password)
+    return key
+  }
+  static createKeyHash (key: Buffer) {
+    const hash = sha256(sha256Hex(key))
+    const hex = bytesToHex(hash)
+    return { hash, hex }
+  }
+
+  constructor(key: Buffer) {
+    this.key = key
+    const { hash, hex } = PZCryptoBase.createKeyHash(key)
+    this.pwHash = hash
+    this.pwHashHex = hex
   }
 
   decrypt(buf: Buffer, iv: Buffer) {
@@ -262,8 +273,8 @@ class PZCryptoCurrent implements PZCrypto {
     return this.base.pwHashHex
   }
 
-  constructor(password: string) {
-    this.base = new PZCryptoBase(password)
+  constructor(key: Buffer) {
+    this.base = new PZCryptoBase(key)
   }
 
   decrypt(buf: Buffer) {
@@ -312,8 +323,8 @@ class PZCryptoV1 implements PZCrypto {
     return this.base.pwHashHex
   }
 
-  constructor(password: string) {
-    this.base = new PZCryptoBase(password)
+  constructor(key: Buffer) {
+    this.base = new PZCryptoBase(key)
     this.iv = sha256(this.base.key).slice(0, ivSize)
   }
 
@@ -338,10 +349,20 @@ class PZCryptoV1 implements PZCrypto {
   }
 }
 
-export const getPZCrypto = (password: string, version: number): PZCrypto => {
-  if (version === currentVersion) {
-    return new PZCryptoCurrent(password)
+export const createKey = (password: string) => {
+  return PZCryptoBase.createKey(password)
+}
+export const createKeyHash = (key: Buffer) => {
+  return PZCryptoBase.createKeyHash(key)
+}
+export const createPZCryptoByKey = (key: Buffer, version: number): PZCrypto => {
+  if (version === 1 || version === 2) {
+    return new PZCryptoV1(key)
   } else {
-    return new PZCryptoV1(password)
+    return new PZCryptoCurrent(key)
   }
+}
+export const createPZCryptoByPw = (password: string, version: number): PZCrypto => {
+  const key = createKey(password)
+  return createPZCryptoByKey(key, version)
 }

@@ -138,6 +138,18 @@ export class PZIndexReader {
     this.update()
   }
 
+  findFile (folderId: number, filename: string) {
+    const folder = this.getFolder(folderId)
+    if (folder) {
+      const children = this.getChildren(folder)
+      const file = children.files.find(f => f.name === filename)
+      if (file) {
+        return file
+      }
+    }
+
+    return undefined
+  }
   getFolder(id: number) {
     if (id === folderRootId) {
       return this.root

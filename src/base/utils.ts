@@ -36,7 +36,9 @@ export const fspEnsureOpenFile = async (file: string, flag: string = 'w+') => {
   let stats
   try {
     stats = await fsp.stat(file)
-  } catch {}
+  } catch {
+    stats = undefined
+  }
   if (!(stats && stats.isFile())) {
     ensureDir(path.dirname(file))
   }

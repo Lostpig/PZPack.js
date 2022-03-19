@@ -1,8 +1,8 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
-import { currentVersion, getSignHash, headLength } from './base/common'
-import { getPZCrypto, type PZCrypto } from './base/crypto'
+import { currentVersion, PZSigns, headLength, type PZTypes } from './base/common'
+import { createPZCryptoByPw, type PZCrypto } from './base/crypto'
 import { PZIndexEncoder, type PZIndexBuilder, type PZFileBuilding } from './base/indices'
 import { ensureDir, fsCloseAsync, fsOpenAsync, fsWriteAsync } from './base/utils'
 import { taskManager, type AsyncTask, type CancelToken } from './base/task'
@@ -15,13 +15,20 @@ export interface BuildProgress {
   total: [number, number]
 }
 
+export interface PZBuilderOptions {
+  password: string
+  indexBuilder: PZIndexBuilder
+  type: PZTypes
+}
 export class PZBuilder {
   private indexBuilder: PZIndexBuilder
   private crypto: PZCrypto
   private description = ''
-  constructor(password: string, indexBuilder: PZIndexBuilder) {
-    this.indexBuilder = indexBuilder
-    this.crypto = getPZCrypto(password, currentVersion)
+  private type: PZTypes
+  constructor(options: PZBuilderOptions) {
+    this.indexBuilder = options.indexBuilder
+    this.crypto = createPZCryptoByPw(options.password, currentVersion)
+    this.type = options.type
   }
   setDescription(description: string) {
     this.description = description
@@ -52,7 +59,7 @@ export class PZBuilder {
     await fsWriteAsync(fd, versionBuf, 0, 4, 0)
 
     // write sign
-    const signBuf = getSignHash()
+    const signBuf = PZSigns[this.type].bytes
     await fsWriteAsync(fd, signBuf, 0, 32, 4)
 
     // write password check

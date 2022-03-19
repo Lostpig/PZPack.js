@@ -1,6 +1,6 @@
 {
   "name": "pzpack",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "",
   "main": "dist/cjs.js",
   "module": "dist/esm.js",
@@ -12,15 +12,19 @@
     "build": "rollup -c ./rollup.config.cjs",
     "lint": "eslint --cache --ext .ts --format=pretty ./src",
     "lint:prettier": "prettier -c ./src/**/*",
+    "check": "tsc --noEmit",
     "prettier": "prettier --write ./src/**/*",
     "test:ex": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.extract.ts",
     "test:bu": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.build.ts",
-    "test:lo": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.load.ts"
+    "test:lo": "ts-node ./test/test.load.ts",
+    "test:mv": "ts-node ./test/test.video.ts",
+    "test:mvs": "ts-node ./test/test.mvserver.ts"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "@rollup/plugin-typescript": "^8.3.1",
+    "@types/fluent-ffmpeg": "^2.1.20",
     "@types/node": "^17.0.4",
     "@typescript-eslint/eslint-plugin": "^5.12.0",
     "@typescript-eslint/parser": "^5.12.0",
@@ -31,7 +35,7 @@
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-promise": "^6.0.0",
     "eslint-plugin-unicorn": "^41.0.0",
-    "ora": "^6.0.1",
+    "ora": "^5.4.1",
     "prettier": "^2.5.1",
     "rollup": "^2.69.0",
     "ts-node": "^10.4.0",
@@ -40,6 +44,7 @@
   },
   "dependencies": {
     "chalk": "^4.1.2",
-    "dayjs": "^1.10.8"
+    "dayjs": "^1.10.8",
+    "fluent-ffmpeg": "^2.1.2"
   }
 }

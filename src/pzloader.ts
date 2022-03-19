@@ -1,12 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { performance } from 'node:perf_hooks'
-import { isCompatible, getSignHashHex, headLength, type ProgressReporter } from './base/common'
+import { isCompatible, headLength, checkSign, type ProgressReporter, type PZTypes } from './base/common'
 import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync, fsReadAsync } from './base/utils'
-import { getPZCrypto, type PZCrypto } from './base/crypto'
+import { createPZCryptoByPw, type PZCrypto } from './base/crypto'
 import {
   NotSupportedVersionError,
-  NotSupportedFileTypeError,
   IncorrectPasswordError,
   FileAlreadyExistsError,
 } from './base/exceptions'
@@ -34,6 +33,7 @@ class PZLoader {
   private _version?: number
   private _fd?: number
   private _fileStat?: fs.Stats
+  private _type: PZTypes
   private readonly crypto: PZCrypto
 
   readonly filename
@@ -55,8 +55,11 @@ class PZLoader {
     }
     return this._fileStat
   }
-  get size () {
+  get size() {
     return this.fileStat.size
+  }
+  get type () {
+    return this._type
   }
 
   private getVersion() {
@@ -72,24 +75,21 @@ class PZLoader {
 
     const tempBuffer = Buffer.alloc(32)
     fs.readSync(this.fd, tempBuffer, 0, 32, 4)
-
-    const signHex = bytesToHex(tempBuffer)
-    const innerSignHex = getSignHashHex()
-    if (signHex !== innerSignHex) {
-      throw new NotSupportedFileTypeError()
-    }
+    const pzType = checkSign(tempBuffer)
 
     fs.readSync(this.fd, tempBuffer, 0, 32, 36)
     const pwHex = bytesToHex(tempBuffer)
     if (pwHex !== this.crypto.passwordHashHex) {
       throw new IncorrectPasswordError()
     }
+
+    return pzType
   }
 
   constructor(filename: string, password: string) {
     this.filename = filename
-    this.crypto = getPZCrypto(password, this.version)
-    this.checkFile()
+    this.crypto = createPZCryptoByPw(password, this.version)
+    this._type = this.checkFile()
   }
 
   private _indexCache?: PZIndexReader
@@ -360,6 +360,33 @@ class PZLoader {
   }
 }
 
+const readVersion = (fd: number) => {
+  const buf = Buffer.alloc(4)
+  fs.readSync(fd, buf, 0, 4, 0)
+  const version = buf.readInt32LE(0)
+  return version
+}
+const checkPZSign = (fd: number) => {
+  const tempBuffer = Buffer.alloc(32)
+  fs.readSync(fd, tempBuffer, 0, 32, 4)
+  return checkSign(tempBuffer)
+}
+
+export const checkPZPackFile = (filename: string) => {
+  let fd
+  try {
+    fd = fs.openSync(filename, 'r')
+    const version = readVersion(fd)
+    if (!isCompatible(version)) {
+      throw new NotSupportedVersionError()
+    }
+    checkPZSign(fd)
+  } finally {
+    if (fd) {
+      fs.closeSync(fd)
+    }
+  }
+}
 export const OpenPzFile = (filename: string, password: string) => {
   const pzHandle = new PZLoader(filename, password)
   return pzHandle

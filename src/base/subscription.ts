@@ -124,3 +124,8 @@ export class PZBehaviorNotify<T> extends PZNotify<T> {
   }
 }
 
+export const waitObservable = (observable: PZObservable<unknown>) => {
+  return new Promise<void>((res, rej) => {
+    observable.subscribe(() => {}, rej, res)
+  })
+}

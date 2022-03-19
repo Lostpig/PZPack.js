@@ -1,6 +1,6 @@
 import { default as dayjs } from 'dayjs'
 import { fspEnsureOpenFile } from './utils'
-import { default as chalk, Chalk } from 'chalk'
+import { default as chalk, type Chalk } from 'chalk'
 
 export enum LogLevel {
   DEBUG = 0,
