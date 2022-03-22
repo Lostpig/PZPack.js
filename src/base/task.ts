@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks'
 import type { ProgressReporter } from './common'
 
-interface TaskCompleteReport<T> {
+export interface TaskCompleteReport<T> {
   value?: T
   isCanceled: boolean
 }

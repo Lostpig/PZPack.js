@@ -4,16 +4,22 @@ import { type PZLoader } from '../pzloader'
 import { logger } from '../base/logger'
 
 export class PZMVSimpleServer {
-  private loader: PZLoader
+  private _loader: PZLoader
   private server?: Server
   private _port?: number
   get port() {
     if (typeof this._port !== 'number') this._port = this.randomPort()
     return this._port
   }
+  get loader () {
+    return this._loader
+  }
+  get running () {
+    return this.server !== undefined
+  }
 
   constructor(loader: PZLoader) {
-    this.loader = loader
+    this._loader = loader
   }
 
   private randomPort() {
@@ -25,8 +31,11 @@ export class PZMVSimpleServer {
       this.server = undefined
     }
   }
-  start(port?: number) {
-    if (this.server) this.close()
+  start(port?: number, force?: boolean) {
+    if (this.server) {
+      if (!force) return
+      this.close()
+    }
     if (typeof port === 'number') this._port = port
 
     this.server = createServer((req, res) => {
@@ -35,6 +44,8 @@ export class PZMVSimpleServer {
     this.server.listen(this.port, () => {
       logger.debug('PZMVServer start at port ' + this.port)
     })
+
+    return this.port
   }
   getVideoFolders() {
     const idx = this.loader.loadIndex()

@@ -4,6 +4,7 @@ import { folderRootId } from '../common'
 import { PZNotify } from '../subscription'
 import { nextTick } from '../utils'
 import type { PZFileBuilding, PZFilePacked, PZFolder, PZFolderChildren } from './types'
+import { logger } from 'base/logger'
 
 const encodeFile = (file: PZFilePacked) => {
   const nameBuf = Buffer.from(file.name, 'utf8')
@@ -44,7 +45,8 @@ const createPZFolder = (id: number, pid: number, name: string, fullname: string)
   return { id, pid, name, fullname }
 }
 const createPZFile = (name: string, fullname: string, pid: number, source: string, size: number) => {
-  return <PZFileBuilding>{ name, fullname, pid, source, size }
+  const ext = path.extname(name)
+  return <PZFileBuilding>{ name, ext, fullname, pid, source, size }
 }
 
 interface PZBuildingNode {
@@ -166,9 +168,45 @@ export class PZIndexBuilder {
     }
 
     const fullname = path.join(toNode.bind.fullname, name)
-    const ext = path.extname(fullname)
+    const newFile = createPZFile(name, fullname, toNode.bind.id, file.source, file.size)
+
     this.removeFile(file)
-    toNode.files.set(name, { name, fullname, pid: toNode.bind.id, size: file.size, source: file.source, ext })
+    toNode.files.set(name, newFile)
+    this.update()
+  }
+  moveFolder(folder: PZFolder, moveToPid: number, rename?: string) {
+    if (folder.id === this.rootId) {
+      logger.warning('root folder cannot move')
+      return
+    }
+
+    const fromNode = this.getNode(folder.pid)
+    if (!fromNode) {
+      throw new Error(`PZBuilder move folder failed: parent id = "${folder.pid}" not found`)
+    }
+    const toNode = this.getNode(moveToPid)
+    if (!toNode) {
+      throw new Error(`PZBuilder move folder failed: parent id = "${moveToPid}" not found`)
+    }
+    const selfNode = this.getNode(folder.id)
+    if (!selfNode) {
+      throw new Error(`PZBuilder move folder failed: folder id = "${folder.id}" not found`)
+    }
+
+    const name = rename ?? folder.name
+    if (toNode.folders.has(name)) {
+      throw new Error(`PZBuilder move folder failed: folder name "${name}" in parent is already exists`)
+    }
+
+    const fullname = path.join(toNode.bind.fullname, name)
+    const newId = this.idCounter()
+    const newFolder = createPZFolder(newId, moveToPid, name, fullname)
+    selfNode.bind = newFolder
+    this.nodesMap.delete(folder.id)
+    this.nodesMap.set(newFolder.id, selfNode)
+
+    fromNode.folders.delete(folder.name)
+    toNode.folders.set(newFolder.name, newFolder)
 
     this.update()
   }

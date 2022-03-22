@@ -100,5 +100,9 @@ export const wait = (ms: number) => {
   })
 }
 export const nextTick = () => {
-  return wait(0)
+  return new Promise<void>((res) => {
+    process.nextTick(() => {
+      res()
+    })
+  })
 }
