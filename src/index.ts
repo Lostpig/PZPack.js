@@ -1,3 +1,4 @@
+export { PZTypes, currentVersion } from './base/common'
 export { OpenPzFile, checkPZPackFile, type PZLoader, type ExtractProgress } from './pzloader'
 export { PZBuilder, type BuildProgress } from './pzbuilder'
 export {

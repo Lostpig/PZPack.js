@@ -96,6 +96,10 @@ export class PZIndexBuilder {
   private getNode(id: number) {
     return this.nodesMap.get(id)
   }
+  checkEmpty () {
+    const files = this.getAllFiles()
+    if (files.length === 0) throw new Error('builder has not files')
+  }
 
   addFile(source: string, pid: number, name: string) {
     const parent = this.getNode(pid)

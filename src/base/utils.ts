@@ -89,6 +89,31 @@ export const fsCloseAsync = (fd: number) => {
     })
   })
 }
+export const fsStatAsync = (p: string) => {
+  return new Promise<fs.Stats | undefined>((res) => {
+    fs.stat(p, (err, stats) => {
+      if (err) {
+        res(undefined)
+      } else {
+        res(stats)
+      }
+    })
+  })
+}
+export const fsRemoveAsync = async (dir: string) => {
+  const stat = await fsStatAsync(dir)
+  if (!stat) return
+
+  return new Promise<void>((res, rej) => {
+    fs.rm(dir, (err) => {
+      if (err) {
+        rej(err)
+      } else {
+        res()
+      }
+    })
+  })
+}
 
 export const wait = (ms: number) => {
   if (ms <= 0) {

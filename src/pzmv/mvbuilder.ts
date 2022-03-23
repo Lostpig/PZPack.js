@@ -1,19 +1,19 @@
 import * as path from 'path'
 import * as fs from 'fs'
-import { isVideoFile, type codecType } from './base'
+import { isVideoFile } from './base'
 import { PZNotify, waitObservable } from '../base/subscription'
-import { nextTick, ensureEmptyDir } from '../base/utils'
+import { nextTick, ensureDir, fsRemoveAsync } from '../base/utils'
 import { PZBuilder, type BuildProgress } from '../pzbuilder'
 import { PZIndexBuilder } from '../base/indices'
-import { createDash, type FFMpegProgress } from './ffmpeg'
+import { createDash, type FFMpegProgress, type VideoCodecParam, type AudioCodecParam } from './ffmpeg'
 import { taskManager as TM, type AsyncTask, type CancelToken } from '../base/task'
 import { sha256Hex } from '../base/hash'
 import { PZHelper } from '../helper'
 
-interface PZMVIndexFile {
-  name: string
-  source: string
-  size: number
+export interface PZMVIndexFile {
+  readonly name: string
+  readonly source: string
+  readonly size: number
 }
 export class PZMVIndexBuilder {
   private list: PZMVIndexFile[] = []
@@ -35,6 +35,10 @@ export class PZMVIndexBuilder {
   private isExists(filename: string) {
     const found = this.list.find((f) => f.source === filename)
     return !!found
+  }
+  checkEmpty() {
+    const files = this.getList()
+    if (files.length === 0) throw new Error('builder has not files')
   }
 
   addVideo(filename: string, rename?: string) {
@@ -63,6 +67,18 @@ export class PZMVIndexBuilder {
 
     this.update()
   }
+  renameVideo(name: string, rename: string) {
+    const index = this.list.findIndex((f) => f.name === name)
+    if (index >= 0) {
+      const old = this.list[index]
+      this.list[index] = {
+        name: rename,
+        source: old.source,
+        size: old.size,
+      }
+      this.update()
+    }
+  }
   removeVideo(filename: string) {
     const index = this.list.findIndex((f) => f.source === filename)
     if (index >= 0) {
@@ -76,7 +92,7 @@ export class PZMVIndexBuilder {
   }
 }
 
-type PZMVProgressStage = 'ffmpeg' | 'pzbuild'
+type PZMVProgressStage = 'ffmpeg' | 'pzbuild' | 'clean'
 type FfmpegProgressProps = {
   stage: Extract<PZMVProgressStage, 'ffmpeg'>
   count: number
@@ -87,37 +103,59 @@ type PZbuildProgressProps = {
   stage: Extract<PZMVProgressStage, 'pzbuild'>
   progress: BuildProgress
 }
-export type PZMVProgress = FfmpegProgressProps | PZbuildProgressProps
+type CleanTempFileProgress = {
+  stage: Extract<PZMVProgressStage, 'clean'>
+}
+export type PZMVProgress = FfmpegProgressProps | PZbuildProgressProps | CleanTempFileProgress
 
 export interface PZMVBuilderOptions {
   password: string
+  description?: string
   indexBuilder: PZMVIndexBuilder
   tempDir: string
   ffmpegDir: string
-  codec?: codecType
+  videoCodec: VideoCodecParam
+  audioCodec: AudioCodecParam
 }
 export class PZMVBuilder {
   private indexBuilder: PZMVIndexBuilder
   private tempDir: string
   private password: string
   private ffmpegDir: string
-  private codec: codecType
+  private codecs: { video: VideoCodecParam; audio: AudioCodecParam }
+  private description?: string
+  private hashCache = new Map<string, string>()
 
   constructor(options: PZMVBuilderOptions) {
     this.indexBuilder = options.indexBuilder
     this.password = options.password
     this.tempDir = options.tempDir
     this.ffmpegDir = options.ffmpegDir
-    this.codec = options.codec ?? 'copy'
+    this.codecs = { video: options.videoCodec, audio: options.audioCodec }
+    this.description = options.description
+  }
+  private getHash(name: string) {
+    let hash = this.hashCache.get(name)
+    if (!hash) {
+      hash = sha256Hex(name)
+      this.hashCache.set(name, hash)
+    }
+    return hash
   }
   private excuteFfmpeg(mvfile: PZMVIndexFile) {
-    const hashname = sha256Hex(mvfile.name)
+    const hashname = this.getHash(mvfile.name)
     const output = path.join(this.tempDir, hashname, 'output.mpd')
-    const singleTask = createDash({ input: mvfile.source, output, ffmpegPath: this.ffmpegDir, codec: this.codec })
+    const singleTask = createDash({
+      input: mvfile.source,
+      output,
+      ffmpegPath: this.ffmpegDir,
+      videoCodec: this.codecs.video,
+      audioCodec: this.codecs.audio,
+    })
     return singleTask
   }
   private ffmpegProcess(outerTask: AsyncTask<PZMVProgress>, outerToken: CancelToken) {
-    ensureEmptyDir(this.tempDir)
+    ensureDir(this.tempDir)
     const list = this.indexBuilder.getList()
     const completeNotify = new PZNotify<void>()
     const next = (i: number) => {
@@ -146,7 +184,7 @@ export class PZMVBuilder {
     const list = this.indexBuilder.getList()
 
     for (const f of list) {
-      const hashname = sha256Hex(f.name)
+      const hashname = this.getHash(f.name)
       const folder = idxBuilder.addFolder(f.name, idxBuilder.rootId)
       const fileTempDir = path.join(this.tempDir, hashname)
       const tempFiles = await PZHelper.scanDirectory(fileTempDir)
@@ -159,9 +197,25 @@ export class PZMVBuilder {
 
     return idxBuilder
   }
+  private async clearTempFiles() {
+    const list = this.indexBuilder.getList()
+    const promises = []
+    for (const f of list) {
+      const hashname = this.getHash(f.name)
+      const fileTempDir = path.join(this.tempDir, hashname)
+      promises.push(fsRemoveAsync(fileTempDir))
+    }
+
+    return Promise.all(promises)
+  }
   private async buildProcess(output: string, outerTask: AsyncTask<PZMVProgress>, outerToken: CancelToken) {
     const idxBuilder = await this.createIndexBuilder()
-    const pzbuilder = new PZBuilder({ indexBuilder: idxBuilder, password: this.password, type: 'PZVIDEO' })
+    const pzbuilder = new PZBuilder({
+      indexBuilder: idxBuilder,
+      password: this.password,
+      type: 'PZVIDEO',
+    })
+    if (this.description) pzbuilder.setDescription(this.description)
     const pzTask = pzbuilder.buildTo(output)
 
     pzTask.addReporter((p) => {
@@ -172,7 +226,12 @@ export class PZMVBuilder {
       if (outerToken.value) pzTask.cancel()
     })
 
-    return pzTask.complete
+    const result = await pzTask.complete
+
+    TM.postReport(outerTask, { stage: 'clean' })
+    await this.clearTempFiles()
+
+    return result
   }
 
   buildTo(output: string) {
