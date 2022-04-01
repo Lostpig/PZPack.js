@@ -1,6 +1,6 @@
 {
   "name": "pzpack",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "",
   "main": "dist/cjs.js",
   "module": "dist/esm.js",
@@ -18,7 +18,8 @@
     "test:bu": "node --experimental-specifier-resolution=node --loader ts-node/esm ./test/test.build.ts",
     "test:lo": "ts-node ./test/test.load.ts",
     "test:mv": "ts-node ./test/test.video.ts",
-    "test:mvs": "ts-node ./test/test.mvserver.ts"
+    "test:mvs": "ts-node ./test/test.mvserver.ts",
+    "test:idx": "ts-node ./test/test.index.ts"
   },
   "author": "",
   "license": "ISC",

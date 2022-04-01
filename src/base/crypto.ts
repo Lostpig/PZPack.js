@@ -1,5 +1,5 @@
 import * as fs from 'fs'
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { createCipheriv, createDecipheriv, randomBytes, type Decipher } from 'crypto'
 import { sha256, sha256Hex } from './hash'
 import { bytesToHex, fsReadAsync, fsWriteAsync, wait } from './utils'
 import { type ProgressReporter } from './common'
@@ -13,6 +13,8 @@ export interface PZCrypto {
   decrypt: (buf: Buffer) => Buffer
   decryptFile: (option: CryptoStreamOption) => void
   decryptFileAsync: (option: CryptoStreamOptionAysnc) => Promise<number>
+  decryptReader: (option: CryptoReaderOption) => PZDecipherReader
+
   /**
    * @returns 返回总写入大小
    */
@@ -21,6 +23,13 @@ export interface PZCrypto {
    * @returns 返回总写入大小
    */
   encryptFileAsync: (option: CryptoStreamOptionAysnc) => Promise<number>
+}
+export interface CryptoReaderOption {
+  sourceFd: number
+  /** 从源数据流读取的位置 */
+  position: number
+  /** 读取数据大小 */
+  size: number
 }
 export interface CryptoStreamOption {
   sourceFd: number
@@ -44,16 +53,74 @@ export interface CryptoStreamOptionAysnc extends CryptoStreamOption {
 const algorithm = 'aes-256-cbc'
 const ivSize = 16
 
+type PZDecipherReadResult = {
+  data: Buffer
+  end: boolean
+}
+class PZDecipherReader {
+  private fd: number
+  private offset: number
+  private length: number
+  private readed: number
+  private decipher: Decipher
+
+  constructor(fd: number, offset: number, length: number, key: Buffer, iv: Buffer) {
+    this.fd = fd
+    this.offset = offset
+    this.length = length
+    this.readed = 0
+
+    this.decipher = createDecipheriv(algorithm, key, iv)
+  }
+  private readFinal(): PZDecipherReadResult {
+    const finalBuf = this.decipher.final()
+    return {
+      data: finalBuf,
+      end: true,
+    }
+  }
+  async read(length: number): Promise<PZDecipherReadResult> {
+    if (this.readed >= this.length) {
+      return this.readFinal()
+    }
+
+    const buf = Buffer.alloc(length)
+    const readLength = Math.min(this.length - this.readed, buf.length)
+    const bytesReaded = await fsReadAsync(this.fd, buf, {
+      position: this.offset + this.readed,
+      offset: 0,
+      length: readLength,
+    })
+
+    let decryptBuf
+    if (bytesReaded < buf.length) {
+      decryptBuf = this.decipher.update(buf.slice(0, bytesReaded))
+    } else {
+      decryptBuf = this.decipher.update(buf)
+    }
+    this.readed += bytesReaded
+
+    return {
+      data: decryptBuf,
+      end: false,
+    }
+  }
+  destory() {
+    this.decipher.destroy()
+  }
+}
+export type { PZDecipherReader }
+
 class PZCryptoBase {
   key: Buffer
   pwHash: Buffer
   pwHashHex: string
 
-  static createKey (password: string) {
+  static createKey(password: string) {
     const key = sha256(password)
     return key
   }
-  static createKeyHash (key: Buffer) {
+  static createKeyHash(key: Buffer) {
     const hash = sha256(sha256Hex(key))
     const hex = bytesToHex(hash)
     return { hash, hex }
@@ -155,6 +222,9 @@ class PZCryptoBase {
     }
 
     return sumReaded
+  }
+  decryptReader(option: CryptoReaderOption, iv: Buffer) {
+    return new PZDecipherReader(option.sourceFd, option.position, option.size, this.key, iv)
   }
 
   private generateIV() {
@@ -300,6 +370,13 @@ class PZCryptoCurrent implements PZCrypto {
 
     return this.base.decryptFileAsync({ ...option, position: position + ivSize, size: size - ivSize }, iv)
   }
+  decryptReader(option: CryptoReaderOption) {
+    const { sourceFd, position, size } = option
+    const iv = Buffer.alloc(ivSize)
+    fs.readSync(sourceFd, iv, { position, offset: 0, length: ivSize })
+
+    return this.base.decryptReader({ ...option, position: position + ivSize, size: size - ivSize }, iv)
+  }
 
   encrypt(buf: Buffer) {
     return this.base.encrypt(buf)
@@ -336,6 +413,9 @@ class PZCryptoV1 implements PZCrypto {
   }
   decryptFileAsync(option: CryptoStreamOptionAysnc) {
     return this.base.decryptFileAsync(option, this.iv)
+  }
+  decryptReader(option: CryptoReaderOption) {
+    return this.base.decryptReader(option, this.iv)
   }
 
   encrypt(buf: Buffer) {

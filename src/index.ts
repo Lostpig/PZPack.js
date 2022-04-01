@@ -3,6 +3,9 @@ export { OpenPzFile, checkPZPackFile, type PZLoader, type ExtractProgress } from
 export { PZBuilder, type BuildProgress } from './pzbuilder'
 export {
   PZIndexBuilder,
+  PZIndexReader,
+  serializeIndex,
+  deserializeIndex,
   type PZFileBuilding,
   type PZFilePacked,
   type PZFolder,
@@ -10,6 +13,7 @@ export {
 } from './base/indices'
 export { PZHelper } from './helper'
 export { PZLogger, logger as PZDefaultLogger, LogLevel } from './base/logger'
+export type { PZDecipherReader } from './base/crypto'
 
 export * as PZTask from './base/task'
 export * as PZSubscription from './base/subscription'

@@ -4,7 +4,7 @@ import { folderRootId } from '../common'
 import { PZNotify } from '../subscription'
 import { nextTick } from '../utils'
 import type { PZFileBuilding, PZFilePacked, PZFolder, PZFolderChildren } from './types'
-import { logger } from 'base/logger'
+import { logger } from '../logger'
 
 const encodeFile = (file: PZFilePacked) => {
   const nameBuf = Buffer.from(file.name, 'utf8')
@@ -96,7 +96,7 @@ export class PZIndexBuilder {
   private getNode(id: number) {
     return this.nodesMap.get(id)
   }
-  checkEmpty () {
+  checkEmpty() {
     const files = this.getAllFiles()
     if (files.length === 0) throw new Error('builder has not files')
   }
@@ -257,6 +257,17 @@ export class PZIndexBuilder {
 
     return files
   }
+  getAll() {
+    const files: PZFileBuilding[] = []
+    const folders: PZFolder[] = []
+
+    for (const node of this.nodesMap.values()) {
+      files.push(...node.files.values())
+      folders.push(...node.folders.values())
+    }
+
+    return { files, folders }
+  }
 }
 export class PZIndexEncoder {
   private builder: PZIndexBuilder
@@ -292,4 +303,41 @@ export class PZIndexEncoder {
 
     return Buffer.concat([lenBuf, folderBytes, fileBytes])
   }
+}
+
+export const serializeIndex = (indexBuilder: PZIndexBuilder) => {
+  const { files, folders } = indexBuilder.getAll()
+  return JSON.stringify({ files, folders })
+}
+export const deserializeIndex = (json: string) => {
+  const data = JSON.parse(json) as ReturnType<PZIndexBuilder['getAll']>
+  const idxBuilder = new PZIndexBuilder()
+
+  const pidMap = new Map<number, number>()
+  const rebuildFolders = (folder: PZFolder) => {
+    if (folder.id === idxBuilder.rootId) {
+      pidMap.set(folder.id, folder.id)
+    } else {
+      const pid = pidMap.get(folder.pid)
+      if (!pid) throw new Error('deserialize index failed, pid not found')
+
+      const newFolder = idxBuilder.addFolder(folder.name, pid)
+      pidMap.set(folder.id, newFolder.id)
+    }
+
+    const childFolders = data.folders.filter(f => f.pid === folder.id)
+    for (const cf of childFolders) {
+      rebuildFolders(cf)
+    }
+  }
+  rebuildFolders(idxBuilder.getRootFolder()!)
+
+  for (const f of data.files) {
+    const pid = pidMap.get(f.pid)
+    if (!pid) throw new Error('deserialize index failed, pid not found')
+
+    idxBuilder.addFile(f.source, pid, f.name)
+  }
+
+  return idxBuilder
 }

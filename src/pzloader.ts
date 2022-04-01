@@ -93,21 +93,25 @@ class PZLoader {
   }
 
   private _indexCache?: PZIndexReader
+  loadIndexBuffer () {
+    const infoLengthBuf = Buffer.alloc(4)
+    fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
+    const infoLength = infoLengthBuf.readInt32LE()
+
+    const indexOffsetBuf = Buffer.alloc(8)
+    fs.readSync(this.fd, indexOffsetBuf, { position: headLength + infoLength + 4, offset: 0, length: 8 })
+    const indexOffset = Number(indexOffsetBuf.readBigInt64LE())
+    const indexSize = this.fileStat.size - indexOffset
+
+    const indexEncryptBuf = Buffer.alloc(indexSize)
+    fs.readSync(this.fd, indexEncryptBuf, { position: indexOffset, offset: 0, length: indexSize })
+    const indexBuf = this.crypto.decrypt(indexEncryptBuf)
+
+    return indexBuf
+  }
   loadIndex() {
     if (!this._indexCache) {
-      const infoLengthBuf = Buffer.alloc(4)
-      fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
-      const infoLength = infoLengthBuf.readInt32LE()
-
-      const indexOffsetBuf = Buffer.alloc(8)
-      fs.readSync(this.fd, indexOffsetBuf, { position: headLength + infoLength + 4, offset: 0, length: 8 })
-      const indexOffset = Number(indexOffsetBuf.readBigInt64LE())
-      const indexSize = this.fileStat.size - indexOffset
-
-      const indexEncryptBuf = Buffer.alloc(indexSize)
-      fs.readSync(this.fd, indexEncryptBuf, { position: indexOffset, offset: 0, length: indexSize })
-      const indexBuf = this.crypto.decrypt(indexEncryptBuf)
-
+      const indexBuf = this.loadIndexBuffer()
       this._indexCache = new PZIndexReader()
       this._indexCache.decode(indexBuf, this.version)
     }
@@ -149,6 +153,10 @@ class PZLoader {
     const buf = this.crypto.decrypt(encryptBuf)
 
     return buf
+  }
+  fileReader(file: PZFilePacked) {
+    const reader = this.crypto.decryptReader({ sourceFd: this.fd, position: file.offset, size: file.size })
+    return reader
   }
 
   extractFile(file: PZFilePacked, target: string, progress?: ProgressReporter<number>) {

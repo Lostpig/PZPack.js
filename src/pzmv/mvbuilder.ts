@@ -92,6 +92,21 @@ export class PZMVIndexBuilder {
   }
 }
 
+export const serializeMvIndex = (indexBuilder: PZMVIndexBuilder) => {
+  const list = indexBuilder.getList()
+  return JSON.stringify({ list })
+}
+export const deserializeMvIndex = (json: string) => {
+  const data = JSON.parse(json) as { list: PZMVIndexFile[] }
+  const idxBuilder = new PZMVIndexBuilder()
+
+  for (const m of data.list) {
+    idxBuilder.addVideo(m.source, m.name)
+  }
+
+  return idxBuilder
+}
+
 type PZMVProgressStage = 'ffmpeg' | 'pzbuild' | 'clean'
 type FfmpegProgressProps = {
   stage: Extract<PZMVProgressStage, 'ffmpeg'>

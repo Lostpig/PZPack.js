@@ -11,10 +11,10 @@ export class PZMVSimpleServer {
     if (typeof this._port !== 'number') this._port = this.randomPort()
     return this._port
   }
-  get loader () {
+  get loader() {
     return this._loader
   }
-  get running () {
+  get running() {
     return this.server !== undefined
   }
 
@@ -78,7 +78,7 @@ export class PZMVSimpleServer {
     const data = {
       videos: videoFolders.map((p) => ({
         name: p.name,
-        path: `/${p.id}/play.mpd`
+        path: `/${p.id}/play.mpd`,
       })),
     }
 
@@ -90,6 +90,29 @@ export class PZMVSimpleServer {
     )
     res.end(JSON.stringify(data))
   }
+  private async responseFile(res: ServerResponse, folderId: number, filename: string) {
+    const idx = this.loader.loadIndex()
+    const file = idx.findFile(folderId, filename)
+    if (!file) return this.responseError(res, 'Video segment file not found')
+    res.writeHead(
+      200,
+      this.createHead({
+        'content-type':
+          filename === 'output.mpd' ? 'application/dash+xml; charset=utf-8' : 'application/octet-stream; charset=utf-8',
+      }),
+    )
+
+    const reader = this.loader.fileReader(file)
+    let notEnd = true
+    while (notEnd) {
+      const result = await reader.read(4096)
+      res.write(result.data)
+      notEnd = !result.end
+    }
+
+    res.end()
+  }
+
   private createHead(headStatus: Record<string, string | number>) {
     return Object.assign(
       {
@@ -107,27 +130,14 @@ export class PZMVSimpleServer {
     const parsedUrl = new URL(req.url, `http://${req.headers.host}`)
     logger.debug('PZMVServer request: ' + parsedUrl.toString())
 
-    if (parsedUrl.pathname === 'videos' || parsedUrl.pathname === '/videos') return this.responseVideos(res)
+    const pathname = decodeURI(parsedUrl.pathname)
+    if (pathname === 'videos' || pathname === '/videos') return this.responseVideos(res)
 
-    const parsedPath = path.parse(parsedUrl.pathname)
+    const parsedPath = path.parse(pathname)
     const fid = this.parsedFid(parsedPath.dir)
     if (fid === undefined) return this.responseError(res, 'Path of video not found')
 
     const filename = parsedPath.base === 'play.mpd' ? 'output.mpd' : parsedPath.base
-    const idx = this.loader.loadIndex()
-    const file = idx.findFile(fid, filename)
-    if (!file) return this.responseError(res, 'Video segment file not found')
-
-    const data = await this.loader.loadFileAsync(file)
-    res.writeHead(
-      200,
-      this.createHead({
-        'content-type':
-          filename === 'output.mpd' ? 'application/dash+xml; charset=utf-8' : 'application/octet-stream; charset=utf-8',
-        'content-length': data.length,
-      }),
-    )
-    res.write(data)
-    res.end()
+    await this.responseFile(res, fid, filename)
   }
 }

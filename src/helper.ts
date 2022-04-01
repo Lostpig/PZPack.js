@@ -1,6 +1,7 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
+import { sha256, sha256Hex } from './base/hash'
 
 const scanDirectory = async (dir: string) => {
   const dirs = [dir]
@@ -48,4 +49,6 @@ const scanDirectorySync = (dir: string) => {
 export const PZHelper = {
   scanDirectory,
   scanDirectorySync,
+  sha256,
+  sha256Hex
 }
