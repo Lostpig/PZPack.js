@@ -124,7 +124,7 @@ type CleanTempFileProgress = {
 export type PZMVProgress = FfmpegProgressProps | PZbuildProgressProps | CleanTempFileProgress
 
 export interface PZMVBuilderOptions {
-  password: string
+  password: string | Buffer
   description?: string
   indexBuilder: PZMVIndexBuilder
   tempDir: string
@@ -135,7 +135,7 @@ export interface PZMVBuilderOptions {
 export class PZMVBuilder {
   private indexBuilder: PZMVIndexBuilder
   private tempDir: string
-  private password: string
+  private password: string | Buffer
   private ffmpegDir: string
   private codecs: { video: VideoCodecParam; audio: AudioCodecParam }
   private description?: string

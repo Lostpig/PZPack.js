@@ -3,7 +3,7 @@ import * as path from 'path'
 import { performance } from 'node:perf_hooks'
 import { isCompatible, headLength, checkSign, type ProgressReporter, type PZTypes } from './base/common'
 import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync, fsReadAsync } from './base/utils'
-import { createPZCryptoByPw, type PZCrypto } from './base/crypto'
+import { createPZCryptoByKey, createKey, type PZCrypto } from './base/crypto'
 import {
   NotSupportedVersionError,
   IncorrectPasswordError,
@@ -86,9 +86,9 @@ class PZLoader {
     return pzType
   }
 
-  constructor(filename: string, password: string) {
+  constructor(filename: string, key: Buffer) {
     this.filename = filename
-    this.crypto = createPZCryptoByPw(password, this.version)
+    this.crypto = createPZCryptoByKey(key, this.version)
     this._type = this.checkFile()
   }
 
@@ -380,23 +380,37 @@ const checkPZSign = (fd: number) => {
   return checkSign(tempBuffer)
 }
 
-export const checkPZPackFile = (filename: string) => {
+export const checkPZPackFile = (fd: number) => {
+  const version = readVersion(fd)
+  if (!isCompatible(version)) {
+    throw new NotSupportedVersionError()
+  }
+  const type = checkPZSign(fd)
+
+  return { version, type }
+}
+export const getPasswordHash = (fd: number) => {
+  const pwhashBuffer = Buffer.alloc(32)
+  fs.readSync(fd, pwhashBuffer, 0, 32, 36)
+  return bytesToHex(pwhashBuffer)
+}
+export const getPZPackFileMate = (filename: string) => {
   let fd
   try {
     fd = fs.openSync(filename, 'r')
-    const version = readVersion(fd)
-    if (!isCompatible(version)) {
-      throw new NotSupportedVersionError()
-    }
-    checkPZSign(fd)
+    const { version, type } = checkPZPackFile(fd)
+    const pwHash = getPasswordHash(fd)
+    return { version, type, pwHash }
   } finally {
     if (fd) {
       fs.closeSync(fd)
     }
   }
 }
-export const OpenPzFile = (filename: string, password: string) => {
-  const pzHandle = new PZLoader(filename, password)
+
+export const OpenPzFile = (filename: string, password: string | Buffer) => {
+  const key = typeof password === 'string' ? createKey(password) : password
+  const pzHandle = new PZLoader(filename, key)
   return pzHandle
 }
 export type { PZLoader }

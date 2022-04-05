@@ -2,7 +2,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import { currentVersion, PZSigns, headLength, type PZTypes } from './base/common'
-import { createPZCryptoByPw, type PZCrypto } from './base/crypto'
+import { createKey, createPZCryptoByKey, type PZCrypto } from './base/crypto'
 import { PZIndexEncoder, type PZIndexBuilder, type PZFileBuilding } from './base/indices'
 import { ensureDir, fsCloseAsync, fsOpenAsync, fsWriteAsync } from './base/utils'
 import { taskManager, type AsyncTask, type CancelToken } from './base/task'
@@ -16,7 +16,7 @@ export interface BuildProgress {
 }
 
 export interface PZBuilderOptions {
-  password: string
+  password: string | Buffer
   indexBuilder: PZIndexBuilder
   type: PZTypes
 }
@@ -27,7 +27,8 @@ export class PZBuilder {
   private type: PZTypes
   constructor(options: PZBuilderOptions) {
     this.indexBuilder = options.indexBuilder
-    this.crypto = createPZCryptoByPw(options.password, currentVersion)
+    const key = typeof options.password === 'string' ? createKey(options.password) : options.password
+    this.crypto = createPZCryptoByKey(key, currentVersion)
     this.type = options.type
   }
   setDescription(description: string) {

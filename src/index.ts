@@ -1,5 +1,12 @@
 export { PZTypes, currentVersion } from './base/common'
-export { OpenPzFile, checkPZPackFile, type PZLoader, type ExtractProgress } from './pzloader'
+export {
+  OpenPzFile,
+  checkPZPackFile,
+  getPasswordHash,
+  getPZPackFileMate,
+  type PZLoader,
+  type ExtractProgress,
+} from './pzloader'
 export { PZBuilder, type BuildProgress } from './pzbuilder'
 export {
   PZIndexBuilder,
@@ -18,3 +25,4 @@ export type { PZDecipherReader } from './base/crypto'
 export * as PZTask from './base/task'
 export * as PZSubscription from './base/subscription'
 export * as PZVideo from './pzmv'
+export * as PZCryptos from './base/crypto'
