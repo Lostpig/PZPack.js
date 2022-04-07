@@ -1,6 +1,7 @@
 import * as fs from 'fs'
 import * as fsp from 'fs/promises'
 import * as path from 'path'
+import { default as del } from 'del'
 
 export const bytesToHex = (buf: Buffer) => {
   return buf.toString('hex').toUpperCase()
@@ -102,17 +103,9 @@ export const fsStatAsync = (p: string) => {
 }
 export const fsRemoveAsync = async (dir: string) => {
   const stat = await fsStatAsync(dir)
-  if (!stat) return
+  if (!stat) return []
 
-  return new Promise<void>((res, rej) => {
-    fs.rm(dir, (err) => {
-      if (err) {
-        rej(err)
-      } else {
-        res()
-      }
-    })
-  })
+  return del(dir)
 }
 
 export const wait = (ms: number) => {
