@@ -4,8 +4,8 @@ export type Subscription = {
   closed: boolean
   unsubscribe: () => void
 }
-export type NotifyHandle<T> = {
-  next: (param: T) => void
+export type SubjectHandle<T> = {
+  next?: (param: T) => void
   error?: (e: Error) => void
   complete?: () => void
   subscription: Subscription
@@ -22,14 +22,14 @@ export interface PZBehaviorObservable<T> extends PZObservable<T> {
 const closedUnsubscribeFunc = () => {
   logger.warning('this subscription is already closed')
 }
-export class PZNotify<T> implements PZObservable<T> {
-  handles = new Map<symbol, NotifyHandle<T>>()
+export class PZSubject<T> implements PZObservable<T> {
+  handles = new Map<symbol, SubjectHandle<T>>()
   get closed() {
     return this.status != 'active'
   }
   status: 'active' | 'error' | 'complete' = 'active'
 
-  private addHandle(symbol: symbol, handle: NotifyHandle<T>) {
+  private addHandle(symbol: symbol, handle: SubjectHandle<T>) {
     this.handles.set(symbol, handle)
   }
   private removeHandle(symbol: symbol) {
@@ -45,7 +45,7 @@ export class PZNotify<T> implements PZObservable<T> {
 
   next(param: T) {
     for (const handle of this.handles.values()) {
-      handle.next(param)
+      handle.next?.(param)
     }
   }
   complete() {
@@ -70,7 +70,7 @@ export class PZNotify<T> implements PZObservable<T> {
     this.innerError = err
   }
 
-  subscribe(next: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
     if (this.closed) {
       if (this.status == 'error' && error) {
         error(this.innerError || new Error())
@@ -100,8 +100,10 @@ export class PZNotify<T> implements PZObservable<T> {
     return this as PZObservable<T>
   }
 }
-export class PZBehaviorNotify<T> extends PZNotify<T> {
+export class PZBehaviorSubject<T> extends PZSubject<T> {
   private _currentValue: T
+  private _currentError?: Error
+
   get current() {
     return this._currentValue
   }
@@ -110,16 +112,20 @@ export class PZBehaviorNotify<T> extends PZNotify<T> {
     this._currentValue = initValue
   }
 
-  override next(param: T): void {
-    this._currentValue = param
+  next(param: T): void {
+    if (super.status === 'active') {
+      this._currentValue = param
+    }
     super.next(param)
   }
-  override subscribe(next: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
     const res = super.subscribe(next, error, complete)
-    super.next(this.current)
+    if (super.status === 'active') {
+      next?.(this.current)
+    }
     return res
   }
-  override asObservable(): PZBehaviorObservable<T> {
+  asObservable(): PZBehaviorObservable<T> {
     return this
   }
 }

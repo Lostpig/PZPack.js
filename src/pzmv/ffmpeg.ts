@@ -81,7 +81,7 @@ export const defaultLibx265Params: Required<VLibx265Params> = {
   preset: 'slow',
   profile: 'main',
   tune: 'none',
-  crf: 26
+  crf: 26,
 }
 
 const videoLibx265 = (proc: ffmpeg.FfmpegCommand, params: VLibx265Params) => {
@@ -95,7 +95,7 @@ const videoLibx265 = (proc: ffmpeg.FfmpegCommand, params: VLibx265Params) => {
     '-use_timeline 1',
     `-preset ${p.preset}`,
     `-profile ${p.profile}`,
-    `-crf ${p.crf}`
+    `-crf ${p.crf}`,
   ]
   if (p.tune !== 'none') {
     options.push(`-tune ${p.tune}`)
@@ -128,9 +128,7 @@ const videoNvenc = (proc: ffmpeg.FfmpegCommand, params: VNvencParams) => {
   return proc.outputOptions(options)
 }
 const videoCopy = (proc: ffmpeg.FfmpegCommand) => {
-  return proc
-    .videoCodec('copy')
-    .outputOptions(['-seg_duration 10', '-use_template 1', '-use_timeline 1'])
+  return proc.videoCodec('copy').outputOptions(['-seg_duration 10', '-use_template 1', '-use_timeline 1'])
 }
 const setVideoCodec = (proc: ffmpeg.FfmpegCommand, codec: VideoCodecParam): ffmpeg.FfmpegCommand => {
   if (codec.encoder === 'libx265') return videoLibx265(proc, codec)
@@ -184,15 +182,22 @@ export const createDash = (options: DashOptions) => {
   setVideoCodec(proc, videoCodec)
   setAudioCodec(proc, audioCodec)
 
-  const [task, cancelToken] = taskManager.create<FFMpegProgress>()
+  const [task, cancelToken] = taskManager.create<FFMpegProgress>({
+    frames: 0,
+    currentFps: 0,
+    currentKbps: 0,
+    targetSize: 0,
+    timemark: 0,
+    percent: 0,
+  })
   proc
     .on('start', (command) => {
       logger.debug('pzvideo start ffmpeg child process with command:\n' + command)
     })
     .on('progress', (progress: FFMpegProgress) => {
-      taskManager.postReport(task, progress)
+      taskManager.update(task, progress)
 
-      if (cancelToken.value) {
+      if (cancelToken.canceled) {
         proc.kill('SIGKILL')
       }
     })

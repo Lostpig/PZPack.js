@@ -1,7 +1,7 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import { folderRootId } from '../common'
-import { PZNotify } from '../subscription'
+import { PZSubject } from '../subscription'
 import { nextTick } from '../utils'
 import type { PZFileBuilding, PZFilePacked, PZFolder, PZFolderChildren } from './types'
 import { logger } from '../logger'
@@ -58,7 +58,7 @@ interface PZBuildingNode {
 export class PZIndexBuilder {
   private nodesMap = new Map<number, PZBuildingNode>()
   private idCounter: () => number
-  private notify: PZNotify<void> = new PZNotify()
+  private notify: PZSubject<void> = new PZSubject()
   get subscriber() {
     return this.notify.asObservable()
   }

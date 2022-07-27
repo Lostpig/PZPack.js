@@ -1,7 +1,7 @@
 import * as path from 'path'
 import * as fs from 'fs'
 import { isVideoFile } from './base'
-import { PZNotify, waitObservable } from '../base/subscription'
+import { PZSubject, waitObservable } from '../base/subscription'
 import { nextTick, ensureDir, fsRemoveAsync } from '../base/utils'
 import { PZBuilder, type BuildProgress } from '../pzbuilder'
 import { PZIndexBuilder } from '../base/indices'
@@ -17,7 +17,7 @@ export interface PZMVIndexFile {
 }
 export class PZMVIndexBuilder {
   private list: PZMVIndexFile[] = []
-  private notify: PZNotify<void> = new PZNotify()
+  private notify: PZSubject<void> = new PZSubject()
   get subscriber() {
     return this.notify.asObservable()
   }
@@ -107,7 +107,10 @@ export const deserializeMvIndex = (json: string) => {
   return idxBuilder
 }
 
-type PZMVProgressStage = 'ffmpeg' | 'pzbuild' | 'clean'
+type PZMVProgressStage = 'ready' | 'ffmpeg' | 'pzbuild' | 'clean'
+type ReadyProgress = {
+  stage: Extract<PZMVProgressStage, 'ready'>
+}
 type FfmpegProgressProps = {
   stage: Extract<PZMVProgressStage, 'ffmpeg'>
   count: number
@@ -121,7 +124,7 @@ type PZbuildProgressProps = {
 type CleanTempFileProgress = {
   stage: Extract<PZMVProgressStage, 'clean'>
 }
-export type PZMVProgress = FfmpegProgressProps | PZbuildProgressProps | CleanTempFileProgress
+export type PZMVProgress = ReadyProgress | FfmpegProgressProps | PZbuildProgressProps | CleanTempFileProgress
 
 export interface PZMVBuilderOptions {
   password: string | Buffer
@@ -172,20 +175,26 @@ export class PZMVBuilder {
   private ffmpegProcess(outerTask: AsyncTask<PZMVProgress>, outerToken: CancelToken) {
     ensureDir(this.tempDir)
     const list = this.indexBuilder.getList()
-    const completeNotify = new PZNotify<void>()
+    const completeNotify = new PZSubject<void>()
     const next = (i: number) => {
       if (i < list.length) {
-        const st = this.excuteFfmpeg(list[i])
-        st.addReporter((p) => {
-          TM.postReport(outerTask, {
+        const ffmpegTask = this.excuteFfmpeg(list[i])
+        outerToken.onChange(() => {
+          if (outerToken.canceled) ffmpegTask.cancel()
+        })
+
+        ffmpegTask.subscribe((p) => {
+          TM.update(outerTask, {
             stage: 'ffmpeg',
             count: i + 1,
             total: list.length,
             progress: p,
           })
-          if (outerToken.value) st.cancel()
+        }, (err) => {
+          TM.throwError(outerTask, err)
+        }, () => {
+          next(i + 1)
         })
-        st.complete.then(() => next(i + 1))
       } else {
         completeNotify.complete()
       }
@@ -231,30 +240,38 @@ export class PZMVBuilder {
       type: 'PZVIDEO',
     })
     if (this.description) pzbuilder.setDescription(this.description)
-    const pzTask = pzbuilder.buildTo(output)
 
-    pzTask.addReporter((p) => {
-      TM.postReport(outerTask, {
+    const completeNotify = new PZSubject<void>()
+    const pzTask = pzbuilder.buildTo(output)
+    outerToken.onChange(() => {
+      if (outerToken.canceled) pzTask.cancel()
+    })
+
+    pzTask.subscribe((p) => {
+      TM.update(outerTask, {
         stage: 'pzbuild',
         progress: p,
       })
-      if (outerToken.value) pzTask.cancel()
+    }, (err) => {
+      TM.throwError(outerTask, err)
+    }, async () => {
+      TM.update(outerTask, { stage: 'clean' })
+      await this.clearTempFiles()
+      completeNotify.complete()
     })
 
-    const result = await pzTask.complete
-
-    TM.postReport(outerTask, { stage: 'clean' })
-    await this.clearTempFiles()
-
-    return result
+    return completeNotify.asObservable()
   }
 
   buildTo(output: string) {
-    const [task, cancelToken] = TM.create<PZMVProgress>()
+    const [task, cancelToken] = TM.create<PZMVProgress>({ stage: 'ready' })
     const ffmpegNotify = this.ffmpegProcess(task, cancelToken)
     waitObservable(ffmpegNotify)
       .then(() => {
         return this.buildProcess(output, task, cancelToken)
+      })
+      .then((buildNotify) => {
+        return waitObservable(buildNotify)
       })
       .then(() => {
         TM.complete(task)

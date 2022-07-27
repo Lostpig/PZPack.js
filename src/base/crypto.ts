@@ -45,7 +45,7 @@ export interface CryptoStreamOption {
 }
 export interface CryptoStreamOptionAysnc extends CryptoStreamOption {
   frequency?: number
-  canceled: CancelToken
+  cancelToken: CancelToken
 }
 
 // 加密算法固定
@@ -58,55 +58,74 @@ type PZDecipherReadResult = {
   end: boolean
 }
 class PZDecipherReader {
-  private fd: number
-  private offset: number
-  private length: number
-  private readed: number
-  private decipher: Decipher
+  private _fd: number
+  private _offset: number
+  private _length: number
+  private _readed: number
+  private _decipher: Decipher
+  private _closed: boolean
+  public get closed() {
+    return this._closed
+  }
 
   constructor(fd: number, offset: number, length: number, key: Buffer, iv: Buffer) {
-    this.fd = fd
-    this.offset = offset
-    this.length = length
-    this.readed = 0
+    this._fd = fd
+    this._offset = offset
+    this._length = length
+    this._readed = 0
+    this._closed = false
 
-    this.decipher = createDecipheriv(algorithm, key, iv)
+    this._decipher = createDecipheriv(algorithm, key, iv)
   }
   private readFinal(): PZDecipherReadResult {
-    const finalBuf = this.decipher.final()
+    const finalBuf = this._decipher.final()
     return {
       data: finalBuf,
       end: true,
     }
   }
   async read(length: number): Promise<PZDecipherReadResult> {
-    if (this.readed >= this.length) {
+    if (this._closed) {
+      throw new Error('PZDecipherReader Error: reader is closed')
+    }
+
+    if (this._readed >= this._length) {
       return this.readFinal()
     }
 
     const buf = Buffer.alloc(length)
-    const readLength = Math.min(this.length - this.readed, buf.length)
-    const bytesReaded = await fsReadAsync(this.fd, buf, {
-      position: this.offset + this.readed,
+    const readLength = Math.min(this._length - this._readed, buf.length)
+    const bytesReaded = await fsReadAsync(this._fd, buf, {
+      position: this._offset + this._readed,
       offset: 0,
       length: readLength,
     })
 
     let decryptBuf
     if (bytesReaded < buf.length) {
-      decryptBuf = this.decipher.update(buf.slice(0, bytesReaded))
+      decryptBuf = this._decipher.update(buf.slice(0, bytesReaded))
     } else {
-      decryptBuf = this.decipher.update(buf)
+      decryptBuf = this._decipher.update(buf)
     }
-    this.readed += bytesReaded
+    this._readed += bytesReaded
 
     return {
       data: decryptBuf,
       end: false,
     }
   }
+  reset () {
+    if (this._closed) {
+      throw new Error('PZDecipherReader Error: reader is closed')
+    }
+
+    this._readed = 0
+  }
   destory() {
-    this.decipher.destroy()
+    if (!this._closed) {
+      this._decipher.destroy()
+      this._closed = true
+    }
   }
 }
 export type { PZDecipherReader }
@@ -178,14 +197,14 @@ class PZCryptoBase {
     progress?.(size)
   }
   async decryptFileAsync(option: CryptoStreamOptionAysnc, iv: Buffer) {
-    const { sourceFd, targetFd, position, offset, size, frequency, progress } = option
+    const { sourceFd, targetFd, position, offset, size, frequency, progress, cancelToken } = option
     const tempBuf = Buffer.alloc(65536)
     const decipher = createDecipheriv(algorithm, this.key, iv)
 
     let sumReaded = 0
     let sumWritten = 0
     while (sumReaded < size) {
-      if (option.canceled.value) break
+      if (cancelToken.canceled) break
       const readLength = Math.min(size - sumReaded, tempBuf.length)
 
       const bytesReaded = await fsReadAsync(sourceFd, tempBuf, {
@@ -212,7 +231,7 @@ class PZCryptoBase {
       }
     }
 
-    if (!option.canceled.value) {
+    if (!cancelToken.canceled) {
       const finalBuf = decipher.final()
       const bytesWritten = await fsWriteAsync(targetFd, finalBuf, 0, finalBuf.length, offset + sumWritten)
       sumWritten += bytesWritten
@@ -282,7 +301,7 @@ class PZCryptoBase {
     return sumWritten
   }
   async encryptFileAsync(option: CryptoStreamOptionAysnc) {
-    const { sourceFd, targetFd, position, offset, size, frequency, progress } = option
+    const { sourceFd, targetFd, position, offset, size, frequency, progress, cancelToken } = option
     const iv = this.generateIV()
     const tempBuf = Buffer.alloc(65536)
 
@@ -294,7 +313,7 @@ class PZCryptoBase {
     sumWritten += ivWritten
 
     while (sumReaded < size) {
-      if (option.canceled.value) break
+      if (cancelToken.canceled) break
       const readLength = Math.min(size - sumReaded, tempBuf.length)
 
       const bytesReaded = await fsReadAsync(sourceFd, tempBuf, {
@@ -321,7 +340,7 @@ class PZCryptoBase {
       }
     }
 
-    if (!option.canceled.value) {
+    if (!cancelToken.canceled) {
       const finalBuf = cipher.final()
       const bytesWritten = await fsWriteAsync(targetFd, finalBuf, 0, finalBuf.length, offset + sumWritten)
       sumWritten += bytesWritten

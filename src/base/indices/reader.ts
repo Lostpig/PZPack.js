@@ -1,6 +1,6 @@
 import * as path from 'path'
 import { folderRootId } from '../common'
-import { PZNotify } from '../subscription'
+import { PZSubject } from '../subscription'
 import type { PZFilePacked, PZFolder, PZFolderChildren } from './types'
 
 const decodeFileCurrent = (buf: Buffer, position: number, length: number) => {
@@ -50,7 +50,7 @@ export class PZIndexReader {
   readonly root: PZFolder
   private folderChildrenMap = new WeakMap<PZFolder, PZFolderChildren<PZFilePacked>>()
   private foldersMap = new Map<number, PZFolder>()
-  private notify: PZNotify<void> = new PZNotify()
+  private notify: PZSubject<void> = new PZSubject()
   get subscriber() {
     return this.notify.asObservable()
   }

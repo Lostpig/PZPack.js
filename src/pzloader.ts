@@ -4,11 +4,7 @@ import { performance } from 'node:perf_hooks'
 import { isCompatible, headLength, checkSign, type ProgressReporter, type PZTypes } from './base/common'
 import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync, fsReadAsync } from './base/utils'
 import { createPZCryptoByKey, createKey, type PZCrypto } from './base/crypto'
-import {
-  NotSupportedVersionError,
-  IncorrectPasswordError,
-  FileAlreadyExistsError,
-} from './base/exceptions'
+import { NotSupportedVersionError, IncorrectPasswordError, FileAlreadyExistsError } from './base/exceptions'
 import { PZIndexReader, type PZFilePacked, type PZFolder } from './base/indices'
 import { taskManager } from './base/task'
 
@@ -58,7 +54,7 @@ class PZLoader {
   get size() {
     return this.fileStat.size
   }
-  get type () {
+  get type() {
     return this._type
   }
 
@@ -93,7 +89,7 @@ class PZLoader {
   }
 
   private _indexCache?: PZIndexReader
-  loadIndexBuffer () {
+  loadIndexBuffer() {
     const infoLengthBuf = Buffer.alloc(4)
     fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
     const infoLength = infoLengthBuf.readInt32LE()
@@ -255,10 +251,8 @@ class PZLoader {
     }
     ensureDir(path.parse(target).dir)
 
-    const [task, cancelToken] = taskManager.create<number>()
-    const progressReport = (p: number) => {
-      taskManager.postReport(task, p)
-    }
+    const [task, cancelToken] = taskManager.create<number>(0)
+    const progressReport = (p: number) => taskManager.update(task, p)
 
     let processedBytes = 0
     const exec = async () => {
@@ -269,7 +263,7 @@ class PZLoader {
         position: file.offset,
         size: file.size,
         offset: 0,
-        canceled: cancelToken,
+        cancelToken,
         progress: progressReport,
         frequency,
       })
@@ -277,7 +271,10 @@ class PZLoader {
     }
 
     exec()
-      .then(() => taskManager.complete(task, processedBytes))
+      .then(() => {
+        taskManager.update(task, processedBytes)
+        taskManager.complete(task)
+      })
       .catch((err) => taskManager.throwError(task, err))
 
     return task
@@ -292,8 +289,6 @@ class PZLoader {
     const indices = this.loadIndex()
     const files = indices.getFilesDeep(folder)
 
-    const [task, cancelToken] = taskManager.create<ExtractProgress>()
-
     const progressCache: ExtractProgress = {
       current: 0,
       currentSize: 1,
@@ -302,9 +297,11 @@ class PZLoader {
       extractCount: 0,
       totalCount: files.length,
     }
+    const [task, cancelToken] = taskManager.create<ExtractProgress>(progressCache)
+
     const progressReport = (p: number) => {
       progressCache.current = p
-      taskManager.postReport(task, {
+      taskManager.update(task, {
         ...progressCache,
         extractSize: progressCache.extractSize + progressCache.current,
       })
@@ -332,13 +329,13 @@ class PZLoader {
           position: file.offset,
           size: file.size,
           offset: 0,
-          canceled: cancelToken,
+          cancelToken,
           progress: progressReport,
           frequency,
         })
         fileComplete(file)
         await fsCloseAsync(targetFd)
-        if (cancelToken.value) {
+        if (cancelToken.canceled) {
           break
         }
       }
@@ -346,14 +343,15 @@ class PZLoader {
 
     exec()
       .then(() => {
-        const completeReport = cancelToken.value
+        const completeProgress = cancelToken.canceled
           ? {
               ...progressCache,
               extractSize: progressCache.extractSize + progressCache.current,
             }
           : progressCache
 
-        taskManager.complete(task, completeReport)
+        taskManager.update(task, completeProgress)
+        taskManager.complete(task)
       })
       .catch((err) => taskManager.throwError(task, err))
 

@@ -1,120 +1,110 @@
 import { performance } from 'node:perf_hooks'
-import type { ProgressReporter } from './common'
+import { PZBehaviorSubject } from './subscription'
 
 export interface TaskCompleteReport<T> {
   value?: T
   isCanceled: boolean
 }
-interface TaskRefs<T> {
-  success: (completeReport: TaskCompleteReport<T>) => void
-  error: (e?: Error) => void
-  canceled: boolean
-  completed: boolean
-}
 interface TaskContext<T> {
   frequency: number
   lastReportTime: number
-  reporters: Set<ProgressReporter<T>>
-  refs: TaskRefs<T>
+  canceler: AsyncCanceler
+  subject: PZBehaviorSubject<T>
 }
 export interface CancelToken {
-  readonly value: boolean
+  readonly canceled: boolean
+  onChange: (handler: () => void) => void
 }
 
-const store = new WeakMap<AsyncTask<unknown>, TaskContext<unknown>>()
-
-const addReporter = <T>(task: AsyncTask<T>, reporter: ProgressReporter<T>) => {
-  const context = store.get(task) as TaskContext<T>
-  if (context) {
-    context.reporters.add(reporter)
-  }
-}
-const removeReporter = <T>(task: AsyncTask<T>, reporter: ProgressReporter<T>) => {
-  const context = store.get(task) as TaskContext<T>
-  if (context) {
-    context.reporters.delete(reporter)
-  }
-}
-const cancelTask = <T>(task: AsyncTask<T>) => {
-  const context = store.get(task) as TaskContext<T>
-  if (context) {
-    context.refs.canceled = true
-  }
-}
-
+const store = new WeakMap<AsyncTask<any>, TaskContext<any>>()
 class AsyncTask<T> {
-  readonly complete: Promise<TaskCompleteReport<T>>
-  constructor(competePromise: Promise<TaskCompleteReport<T>>) {
-    this.complete = competePromise
+  private getContext () {
+    const context = store.get(this)
+    if (!context) {
+      throw new Error('AsyncTask reference not available')
+    }
+    return context
   }
 
-  addReporter(reporter: ProgressReporter<T>) {
-    addReporter(this, reporter)
+  get canceled () {
+    return this.getContext().canceler.canceled
   }
-  removeReporter(reporter: ProgressReporter<T>) {
-    removeReporter(this, reporter)
+  subscribe(next: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+    return this.getContext().subject.subscribe(next, error, complete)
   }
   cancel() {
-    cancelTask(this)
+    this.getContext().canceler.cancel()
+  }
+}
+class AsyncCanceler {
+  private value = false
+  private handlers = new Set<() => void>()
+  get canceled () {
+    return this.value
+  }
+  cancel () {
+    if (this.value !== true) {
+      this.value = true
+      this.handlers.forEach(h => h())
+    }
+  }
+  getToken () {
+    const valueGetter = () => this.value
+    const bindHandler = (handler: () => void) => this.handlers.add(handler)
+
+    return {
+      get canceled () {
+        return valueGetter()
+      },
+      onChange (handler: () => void) {
+        bindHandler(handler)
+      }
+    }
   }
 }
 
-const create = <T>(frequency: number = 0): [AsyncTask<T>, CancelToken] => {
-  const refs = { canceled: false, completed: false } as TaskRefs<T>
-  const completePromise = new Promise<TaskCompleteReport<T>>((res, rej) => {
-    refs.success = res
-    refs.error = rej
-  })
+const create = <T>(initState: T, frequency: number = 0): [AsyncTask<T>, CancelToken] => {
+  const subject = new PZBehaviorSubject(initState)
+  const canceler = new AsyncCanceler()
+  const task = new AsyncTask<T>()
 
   const context: TaskContext<T> = {
     frequency,
     lastReportTime: 0,
-    reporters: new Set<ProgressReporter<T>>(),
-    refs,
+    subject,
+    canceler
   }
+  store.set(task, context)
 
-  const task = new AsyncTask<T>(completePromise)
-  store.set(task, context as TaskContext<unknown>)
-
-  const cancelToken = {
-    get value() {
-      return context.refs.canceled
-    },
-  }
-
+  const cancelToken = canceler.getToken()
   return [task, cancelToken]
 }
-const postReport = <T>(task: AsyncTask<T>, value: T) => {
-  const context = store.get(task) as TaskContext<T>
+const update = <T>(task: AsyncTask<T>, state: T) => {
+  const context = store.get(task)
   if (context) {
     const now = performance.now()
     if (now - context.lastReportTime < context.frequency) return
 
-    context.reporters.forEach((p) => p(value))
+    context.subject.next(state)
     context.lastReportTime = now
   }
 }
-const throwError = <T>(task: AsyncTask<T>, err?: Error) => {
-  const context = store.get(task) as TaskContext<T>
-  if (context && !context.refs.completed) {
-    context.refs.error(err)
-    context.refs.completed = true
+const throwError = <T>(task: AsyncTask<T>, err: Error) => {
+  const context = store.get(task)
+  if (context) {
+    context.subject.error(err)
   }
 }
-const complete = <T>(task: AsyncTask<T>, value?: T) => {
-  const context = store.get(task) as TaskContext<T>
-  if (context && !context.refs.completed) {
-    context.refs.success({
-      value,
-      isCanceled: context.refs.canceled,
-    })
-    context.refs.completed = true
+const complete = <T>(task: AsyncTask<T>) => {
+  const context = store.get(task)
+  if (context) {
+    context.subject.complete()
   }
 }
 
 export const taskManager = {
   create,
-  postReport,
+  update,
   throwError,
   complete,
 }

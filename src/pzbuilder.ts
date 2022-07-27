@@ -107,7 +107,7 @@ export class PZBuilder {
     const progressReport = (p: number) => {
       cache.current[0] = p
       const [t0, t1] = cache.total
-      taskManager.postReport(task, {
+      taskManager.update(task, {
         ...cache,
         total: [t0 + p, t1],
       })
@@ -130,7 +130,7 @@ export class PZBuilder {
         offset: positon,
         size: f.size,
         position: 0,
-        canceled: cancelToken,
+        cancelToken,
         progress: progressReport,
         frequency
       })
@@ -140,12 +140,12 @@ export class PZBuilder {
       indexEncoder.addFile(f, positon, written)
 
       positon += written
-      if (cancelToken.value) {
+      if (cancelToken.canceled) {
         break
       }
     }
 
-    if (!cancelToken.value) {
+    if (!cancelToken.canceled) {
       const indexOffsetBuf = Buffer.alloc(8)
       indexOffsetBuf.writeBigInt64LE(BigInt(positon))
       await fsWriteAsync(fd, indexOffsetBuf, 0, 8, indexOffsetPos)
@@ -171,19 +171,19 @@ export class PZBuilder {
       count: [0, 1],
       total: [0, 1],
     }
-    const [task, cancelToken] = taskManager.create<BuildProgress>(100)
-    taskManager.postReport(task, progressCache)
+    const [task, cancelToken] = taskManager.create<BuildProgress>(progressCache, 100)
+    taskManager.update(task, progressCache)
     this.execBuild(fd, [task, cancelToken, progressCache], frequency)
       .then(() => {
         progressCache.phase = 'complete'
-        taskManager.postReport(task, progressCache)
+        taskManager.update(task, progressCache)
 
         fs.closeSync(fd)
         fs.closeSync(lockFd)
         fs.rmSync(target)
         fs.renameSync(tempPath, target)
 
-        taskManager.complete(task, progressCache)
+        taskManager.complete(task)
       })
       .catch((err) => {
         fs.closeSync(fd)
