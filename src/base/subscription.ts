@@ -113,16 +113,12 @@ export class PZBehaviorSubject<T> extends PZSubject<T> {
   }
 
   next(param: T): void {
-    if (super.status === 'active') {
-      this._currentValue = param
-    }
+    if (!this.closed) this._currentValue = param
     super.next(param)
   }
   subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
     const res = super.subscribe(next, error, complete)
-    if (super.status === 'active') {
-      next?.(this.current)
-    }
+    if (!this.closed) next?.(this.current)
     return res
   }
   asObservable(): PZBehaviorObservable<T> {

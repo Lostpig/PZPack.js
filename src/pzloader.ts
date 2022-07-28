@@ -251,8 +251,19 @@ class PZLoader {
     }
     ensureDir(path.parse(target).dir)
 
-    const [task, cancelToken] = taskManager.create<number>(0)
-    const progressReport = (p: number) => taskManager.update(task, p)
+    const progressCache: ExtractProgress = {
+      current: 1,
+      currentSize: file.size,
+      extractSize: 0,
+      totalSize: file.size,
+      extractCount: 0,
+      totalCount: 1,
+    }
+    const [task, cancelToken] = taskManager.create<ExtractProgress>(progressCache)
+    const progressReport = (p: number) => {
+      progressCache.extractSize = p
+      taskManager.update(task, progressCache)
+    }
 
     let processedBytes = 0
     const exec = async () => {
@@ -272,7 +283,10 @@ class PZLoader {
 
     exec()
       .then(() => {
-        taskManager.update(task, processedBytes)
+        progressCache.extractSize = processedBytes
+        progressCache.extractCount = 1
+
+        taskManager.update(task, progressCache)
         taskManager.complete(task)
       })
       .catch((err) => taskManager.throwError(task, err))

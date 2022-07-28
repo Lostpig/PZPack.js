@@ -1,6 +1,6 @@
 {
   "name": "pzpack",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "",
   "main": "dist/cjs.js",
   "module": "dist/esm.js",
