@@ -1,4 +1,4 @@
-import { performance } from 'node:perf_hooks'
+import { errorCodes, PZError } from '../exceptions'
 import { PZBehaviorSubject } from './subscription'
 
 export interface TaskCompleteReport<T> {
@@ -6,8 +6,6 @@ export interface TaskCompleteReport<T> {
   isCanceled: boolean
 }
 interface TaskContext<T> {
-  frequency: number
-  lastReportTime: number
   canceler: AsyncCanceler
   subject: PZBehaviorSubject<T>
 }
@@ -18,19 +16,18 @@ export interface CancelToken {
 
 const store = new WeakMap<AsyncTask<any>, TaskContext<any>>()
 class AsyncTask<T> {
-  private getContext () {
+  private getContext() {
     const context = store.get(this)
     if (!context) {
-      throw new Error('AsyncTask reference not available')
+      throw new PZError(errorCodes.AsyncTaskNotFound)
     }
-    return context
+    return context as  TaskContext<T>
   }
-
-  get canceled () {
+  get canceled() {
     return this.getContext().canceler.canceled
   }
-  subscribe(next: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
-    return this.getContext().subject.subscribe(next, error, complete)
+  observable () {
+    return this.getContext().subject.toObservable()
   }
   cancel() {
     this.getContext().canceler.cancel()
@@ -39,54 +36,50 @@ class AsyncTask<T> {
 class AsyncCanceler {
   private value = false
   private handlers = new Set<() => void>()
-  get canceled () {
+  get canceled() {
     return this.value
   }
-  cancel () {
+  cancel() {
     if (this.value !== true) {
       this.value = true
-      this.handlers.forEach(h => h())
+      this.handlers.forEach((h) => h())
     }
   }
-  getToken () {
+  getToken() {
     const valueGetter = () => this.value
     const bindHandler = (handler: () => void) => this.handlers.add(handler)
 
     return {
-      get canceled () {
+      get canceled() {
         return valueGetter()
       },
-      onChange (handler: () => void) {
+      onChange(handler: () => void) {
         bindHandler(handler)
-      }
+      },
     }
   }
 }
 
-const create = <T>(initState: T, frequency: number = 0): [AsyncTask<T>, CancelToken] => {
+const create = <T>(initState: T): [AsyncTask<T>, CancelToken] => {
   const subject = new PZBehaviorSubject(initState)
   const canceler = new AsyncCanceler()
   const task = new AsyncTask<T>()
 
   const context: TaskContext<T> = {
-    frequency,
-    lastReportTime: 0,
     subject,
-    canceler
+    canceler,
   }
   store.set(task, context)
 
   const cancelToken = canceler.getToken()
   return [task, cancelToken]
 }
-const update = <T>(task: AsyncTask<T>, state: T) => {
+const update = <T>(task: AsyncTask<T>, statePatch: Partial<T>) => {
   const context = store.get(task)
   if (context) {
-    const now = performance.now()
-    if (now - context.lastReportTime < context.frequency) return
-
+    const oldState = context.subject.current
+    const state = Object.assign({}, oldState, statePatch)
     context.subject.next(state)
-    context.lastReportTime = now
   }
 }
 const throwError = <T>(task: AsyncTask<T>, err: Error) => {
@@ -108,5 +101,4 @@ export const taskManager = {
   throwError,
   complete,
 }
-
 export type { AsyncTask }

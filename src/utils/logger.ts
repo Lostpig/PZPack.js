@@ -1,5 +1,5 @@
 import { default as dayjs } from 'dayjs'
-import { fspEnsureOpenFile } from './utils'
+import { ensureFile } from './fs-helper'
 import { default as chalk, type Chalk } from 'chalk'
 
 export enum LogLevel {
@@ -29,9 +29,15 @@ const levelColors: Record<LogLevel, Chalk> = {
   [LogLevel.SILENT]: chalk.black.bgRed,
 }
 
+export interface PZLoggerOptions {
+  id?: string
+  logFile?: string
+  level: LogLevel
+  fileLevel?: LogLevel
+}
 export class PZLogger {
-  consoleLevel: LogLevel = LogLevel.DEBUG
-  fileLevel: LogLevel = LogLevel.WARNING
+  private consoleLevel: LogLevel = LogLevel.DEBUG
+  private fileLevel: LogLevel = LogLevel.WARNING
   private filePath?: string
   private id: string = ''
   private get idPrefix() {
@@ -66,7 +72,7 @@ export class PZLogger {
     if (this.fileLogging || !this.filePath) return
 
     this.fileLogging = true
-    const handle = await fspEnsureOpenFile(this.filePath, 'a')
+    const handle = await ensureFile(this.filePath, 'a')
     let text: string | undefined
     while ((text = this.fileLogQueue.shift()) !== undefined) {
       await handle.write(text, undefined, 'utf8')
@@ -75,24 +81,20 @@ export class PZLogger {
     this.fileLogging = false
   }
 
+  get level() {
+    return {
+      console: this.consoleLevel,
+      file: this.fileLevel
+    }
+  }
   get logFileName() {
     return this.filePath
   }
-
-  constructor(id?: string) {
-    this.id = id ?? ''
-  }
-
-  setID(id: string) {
-    this.id = id
-  }
-  enableFileLog(file: string | false) {
-    if (file === false) {
-      this.filePath = undefined
-      return
-    }
-
-    this.filePath = file
+  constructor(options: PZLoggerOptions) {
+    this.id = options.id ?? ''
+    this.filePath = options.logFile
+    this.consoleLevel = options.level
+    this.fileLevel = options.fileLevel ?? this.consoleLevel
   }
 
   debug(...message: string[]) {
@@ -120,5 +122,3 @@ export class PZLogger {
     }
   }
 }
-
-export const logger = new PZLogger('PZPack')

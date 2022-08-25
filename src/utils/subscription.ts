@@ -1,5 +1,3 @@
-import { logger } from './logger'
-
 export type Subscription = {
   closed: boolean
   unsubscribe: () => void
@@ -13,15 +11,38 @@ export type SubjectHandle<T> = {
 export interface PZObservable<T> {
   closed: boolean
   status: 'active' | 'error' | 'complete'
-  subscribe: (next: (param: T) => void, err?: (e: Error) => void, complete?: () => void) => Subscription
+  subscribe: (next?: (param: T) => void, err?: (e: Error) => void, complete?: () => void) => Subscription
 }
 export interface PZBehaviorObservable<T> extends PZObservable<T> {
   readonly current: T
 }
 
-const closedUnsubscribeFunc = () => {
-  logger.warning('this subscription is already closed')
+const closedUnsubscribeFunc = () => {}
+type SubscribeWrapper<T> = (fn: (param: T) => void) => (param: T) => void
+class PZObserver<T, R extends PZObservable<T>> implements PZBehaviorObservable<T> {
+  private innerObservable: R
+  private wrapper?: SubscribeWrapper<T>
+  constructor (innerObservable: R, subscribeWrapper?: SubscribeWrapper<T>) {
+    this.innerObservable = innerObservable
+    this.wrapper = subscribeWrapper
+  }
+  get status () {
+    return this.innerObservable.status
+  }
+  get closed () {
+    return this.innerObservable.closed
+  }
+  get current () {
+    return (this.innerObservable as never as PZBehaviorObservable<T>).current
+  }
+
+  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+    const wrappedNext = (next && this.wrapper) ? this.wrapper(next) : next
+    const res = this.innerObservable.subscribe(wrappedNext, error, complete)
+    return res
+  }
 }
+
 export class PZSubject<T> implements PZObservable<T> {
   handles = new Map<symbol, SubjectHandle<T>>()
   get closed() {
@@ -96,13 +117,12 @@ export class PZSubject<T> implements PZObservable<T> {
     this.addHandle(s, handle)
     return subscription
   }
-  asObservable() {
-    return this as PZObservable<T>
+  toObservable() {
+    return new PZObserver(this) as PZObservable<T>
   }
 }
 export class PZBehaviorSubject<T> extends PZSubject<T> {
   private _currentValue: T
-  private _currentError?: Error
 
   get current() {
     return this._currentValue
@@ -121,13 +141,31 @@ export class PZBehaviorSubject<T> extends PZSubject<T> {
     if (!this.closed) next?.(this.current)
     return res
   }
-  asObservable(): PZBehaviorObservable<T> {
-    return this
+  toObservable() {
+    return new PZObserver(this) as PZBehaviorObservable<T>
   }
 }
-
 export const waitObservable = (observable: PZObservable<unknown>) => {
   return new Promise<void>((res, rej) => {
-    observable.subscribe(() => {}, rej, res)
+    const subscrition = observable.subscribe(undefined, (e) => {
+      subscrition.unsubscribe()
+      rej(e)
+    }, () => {
+      subscrition.unsubscribe()
+      res()
+    })
   })
+}
+export const frequencyPipe = <T, O extends PZObservable<T>>(observable: O, interval: number) => {
+  const wrapper: SubscribeWrapper<T> = (fn) => {
+    let last = 0
+    return (p: T) => {
+      const now = Date.now()
+      if (now - last > interval) {
+        last = now
+        fn(p)
+      }
+    }
+  }
+  return new PZObserver(observable, wrapper) as never as O
 }

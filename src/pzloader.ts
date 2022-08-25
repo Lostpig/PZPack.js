@@ -1,13 +1,31 @@
-import * as fs from 'fs'
+import type { FileHandle } from 'fs/promises'
+import type { Stats } from 'fs'
 import * as path from 'path'
-import { performance } from 'node:perf_hooks'
-import { isCompatible, headLength, checkSign, type ProgressReporter, type PZTypes } from './base/common'
-import { bytesToHex, ensureDir, ensureEmptyDir, fsOpenAsync, fsCloseAsync, fsReadAsync } from './base/utils'
-import { createPZCryptoByKey, createKey, type PZCrypto } from './base/crypto'
-import { NotSupportedVersionError, IncorrectPasswordError, FileAlreadyExistsError } from './base/exceptions'
-import { PZIndexReader, type PZFilePacked, type PZFolder } from './base/indices'
-import { taskManager } from './base/task'
 
+import { bytesToHex } from './utils/utils'
+import { type PZCrypto, type DecryptFileProgress, createPZDecipherReader, createPZCrypto } from './common/crypto'
+import { compatibleVersions, pzSign } from './common/contants'
+import { provider } from './common/provider'
+import { PZError, errorCodes } from './exceptions'
+import { sha256Hex } from './utils/hash'
+import { craeteIndexLoader, type PZIndexLoader } from './pzindex/loader'
+import type { PZFolder, PZFilePacked } from './types'
+import { PZMemoryWriter } from './utils/pzhandle'
+import { type CancelToken, type AsyncTask, taskManager } from './utils/task'
+import { PZSubject } from './utils/subscription'
+
+import { getContext } from './common/context'
+const ctx = getContext()
+
+interface PZFileHead {
+  version: number
+  sign: string
+  passwordHash: string
+  createTime: number
+  fileSize: number
+  blockSize: number
+  indexSize: number
+}
 export interface ExtractProgress {
   /** 当前提取中的文件已提取的字节数 */
   current: number
@@ -25,404 +43,243 @@ export interface ExtractProgress {
   totalSize: number
 }
 
-class PZLoader {
-  private _version?: number
-  private _fd?: number
-  private _fileStat?: fs.Stats
-  private _type: PZTypes
-  private readonly crypto: PZCrypto
+const readFileHead = async (source: FileHandle): Promise<PZFileHead> => {
+  const headBuf = Buffer.alloc(92)
+  await source.read({ buffer: headBuf, offset: 0, position: 0, length: 92 })
 
-  readonly filename
+  const version = headBuf.readInt32LE(0)
+  const signBuf = headBuf.slice(4, 36)
+  const sign = bytesToHex(signBuf)
+  const pwHash = headBuf.slice(36, 68)
+  const passwordHash = bytesToHex(pwHash)
+  const createTime = Number(headBuf.readBigInt64LE(68))
+  const fileSize = Number(headBuf.readBigInt64LE(76))
+  const blockSize = headBuf.readInt32LE(84)
+  const indexSize = headBuf.readInt32LE(88)
+
+  ctx.logger?.debug(`readFileHead: version = ${version}, size = ${fileSize}, blockSize = ${blockSize}, indexSize = ${indexSize}`)
+
+  return {
+    version,
+    sign,
+    passwordHash,
+    createTime,
+    fileSize,
+    blockSize,
+    indexSize,
+  }
+}
+const checkFileHead = (head: PZFileHead, crypto: PZCrypto, fileStat: Stats) => {
+  if (compatibleVersions.includes(head.version) !== true) {
+    throw new PZError(errorCodes.NotSupportVersion, { version: head.version })
+  }
+
+  const signHash = sha256Hex(pzSign)
+  if (signHash !== head.sign) {
+    throw new PZError(errorCodes.NotSupportFile, { sign: head.sign })
+  }
+
+  if (crypto.pwHashHex !== head.passwordHash) {
+    throw new PZError(errorCodes.IncorrectPassword)
+  }
+
+  if (head.fileSize !== fileStat.size) {
+    throw new PZError(errorCodes.FileSizeCheckFailed, { size: head.fileSize })
+  }
+}
+
+class PZLoader {
+  private _head: PZFileHead
+  private _crypto: PZCrypto
+  private _source: FileHandle
+
   get version() {
-    if (this._version === undefined) {
-      this._version = this.getVersion()
-    }
-    return this._version
-  }
-  private get fd() {
-    if (this._fd === undefined) {
-      this._fd = fs.openSync(this.filename, 'r')
-    }
-    return this._fd
-  }
-  private get fileStat() {
-    if (!this._fileStat) {
-      this._fileStat = fs.statSync(this.filename)
-    }
-    return this._fileStat
+    return this._head.version
   }
   get size() {
-    return this.fileStat.size
+    return this._head.fileSize
   }
-  get type() {
-    return this._type
+  get blockSize() {
+    return this._head.blockSize
   }
-
-  private getVersion() {
-    const buf = Buffer.alloc(4)
-    fs.readSync(this.fd, buf, 0, 4, 0)
-    const version = buf.readInt32LE(0)
-    return version
-  }
-  private checkFile() {
-    if (!isCompatible(this.version)) {
-      throw new NotSupportedVersionError()
-    }
-
-    const tempBuffer = Buffer.alloc(32)
-    fs.readSync(this.fd, tempBuffer, 0, 32, 4)
-    const pzType = checkSign(tempBuffer)
-
-    fs.readSync(this.fd, tempBuffer, 0, 32, 36)
-    const pwHex = bytesToHex(tempBuffer)
-    if (pwHex !== this.crypto.passwordHashHex) {
-      throw new IncorrectPasswordError()
-    }
-
-    return pzType
+  get createTime() {
+    return this._head.createTime
   }
 
-  constructor(filename: string, key: Buffer) {
-    this.filename = filename
-    this.crypto = createPZCryptoByKey(key, this.version)
-    this._type = this.checkFile()
+  constructor(source: FileHandle, crypto: PZCrypto, head: PZFileHead) {
+    this._crypto = crypto
+    this._source = source
+    this._head = head
   }
 
-  private _indexCache?: PZIndexReader
-  loadIndexBuffer() {
-    const infoLengthBuf = Buffer.alloc(4)
-    fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
-    const infoLength = infoLengthBuf.readInt32LE()
-
-    const indexOffsetBuf = Buffer.alloc(8)
-    fs.readSync(this.fd, indexOffsetBuf, { position: headLength + infoLength + 4, offset: 0, length: 8 })
-    const indexOffset = Number(indexOffsetBuf.readBigInt64LE())
-    const indexSize = this.fileStat.size - indexOffset
-
-    const indexEncryptBuf = Buffer.alloc(indexSize)
-    fs.readSync(this.fd, indexEncryptBuf, { position: indexOffset, offset: 0, length: indexSize })
-    const indexBuf = this.crypto.decrypt(indexEncryptBuf)
-
-    return indexBuf
-  }
-  loadIndex() {
-    if (!this._indexCache) {
-      const indexBuf = this.loadIndexBuffer()
-      this._indexCache = new PZIndexReader()
-      this._indexCache.decode(indexBuf, this.version)
-    }
-
-    return this._indexCache
-  }
-  private _description?: string
-  getDescription() {
-    if (this._description !== undefined) return this._description
-
-    const infoLengthBuf = Buffer.alloc(4)
-    fs.readSync(this.fd, infoLengthBuf, { position: headLength, offset: 0, length: 4 })
-    const infoLength = infoLengthBuf.readInt32LE()
-
-    const encryptInfoBuf = Buffer.alloc(infoLength)
-    fs.readSync(this.fd, encryptInfoBuf, { position: headLength + 4, offset: 0, length: infoLength })
-
-    const infoBuf = this.crypto.decrypt(encryptInfoBuf)
-    const descLength = infoBuf.readInt32LE()
-    if (descLength > 0) {
-      this._description = infoBuf.toString('utf8', 8, 8 + descLength)
-    } else {
-      this._description = ''
-    }
-
-    return this._description
-  }
-
-  loadFile(file: PZFilePacked) {
-    const encryptBuf = Buffer.alloc(file.size)
-    fs.readSync(this.fd, encryptBuf, { position: file.offset, offset: 0, length: file.size })
-    const buf = this.crypto.decrypt(encryptBuf)
-
-    return buf
-  }
-  async loadFileAsync(file: PZFilePacked) {
-    const encryptBuf = Buffer.alloc(file.size)
-    await fsReadAsync(this.fd, encryptBuf, { position: file.offset, offset: 0, length: file.size })
-    const buf = this.crypto.decrypt(encryptBuf)
-
-    return buf
-  }
-  fileReader(file: PZFilePacked) {
-    const reader = this.crypto.decryptReader({ sourceFd: this.fd, position: file.offset, size: file.size })
-    return reader
-  }
-
-  extractFile(file: PZFilePacked, target: string, progress?: ProgressReporter<number>) {
-    const targetExists = fs.existsSync(target)
-    if (targetExists) {
-      throw new FileAlreadyExistsError()
-    }
-
-    let lastReportTime = 0
-    const progressReport = (p: number) => {
-      const now = performance.now()
-      if (now - lastReportTime > 300) {
-        progress?.(p)
-        lastReportTime = now
-      }
-    }
-
-    ensureDir(path.parse(target).dir)
-    const targetFd = fs.openSync(target, 'w')
-    this.crypto.decryptFile({
-      sourceFd: this.fd,
-      targetFd,
-      position: file.offset,
-      size: file.size,
+  async getIndex() {
+    const encryptedBuf = Buffer.alloc(this._head.indexSize)
+    await this._source.read({
+      buffer: encryptedBuf, 
       offset: 0,
-      progress: progressReport,
+      position: 92,
+      length: this._head.indexSize
     })
-
-    fs.closeSync(targetFd)
+    const indexData = this._crypto.decryptBlock(encryptedBuf)
+    return craeteIndexLoader(indexData)
   }
-  private statisticExtractSize(files: PZFilePacked[]) {
-    let sumSize = 0
-    for (const f of files) {
-      sumSize += f.size
-    }
-    return sumSize
-  }
-  extractAll(targetDir: string, progress?: ProgressReporter<ExtractProgress>) {
-    const indices = this.loadIndex()
-    return this.extractFolder(indices.root, targetDir, progress)
-  }
-  extractFolder(folder: PZFolder, targetDir: string, progress?: ProgressReporter<ExtractProgress>) {
-    ensureEmptyDir(targetDir)
 
-    const indices = this.loadIndex()
-    const files = indices.getFilesDeep(folder)
-    const totalSize = this.statisticExtractSize(files)
-    const totalCount = files.length
+  async loadFile(file: PZFilePacked) {
+    const fileWriter = new PZMemoryWriter(undefined, file.originSize)
+    await this._crypto.decryptFile(this._source, fileWriter, {
+      position: file.offset,
+      offset: 0,
+      size: file.size,
+      blockSize: this.blockSize,
+    })
+    return fileWriter.getData()
+  }
+  loadFileTask(file: PZFilePacked, writer: PZMemoryWriter) {
+    const [task, cancelToken] = taskManager.create({})
+    const progress$ = new PZSubject<DecryptFileProgress>()
 
-    const totalCache = { count: 0, size: 0 }
-    const fileCache = { current: 0, total: 0 }
-    const progressReport = (p: number) => {
-      fileCache.current = p
-      progress?.({
-        current: fileCache.current,
-        currentSize: fileCache.total,
-        extractSize: totalCache.size + fileCache.current,
-        totalSize,
-        extractCount: totalCache.count,
-        totalCount,
+    this._crypto
+      .decryptFile(this._source, writer, {
+        position: file.offset,
+        offset: 0,
+        size: file.size,
+        blockSize: this.blockSize,
+        cancelToken,
+        progress: progress$,
       })
-    }
-    const fileComplete = (f: PZFilePacked) => {
-      totalCache.count += 1
-      totalCache.size += f.size
-    }
-    const fileStart = (f: PZFilePacked) => {
-      fileCache.current = 0
-      fileCache.total = f.size
-    }
+      .then(() => taskManager.complete(task))
+      .catch((err) => taskManager.throwError(task, err))
+      .finally(() => progress$.complete())
 
-    for (const file of files) {
-      const rpath = indices.resolvePath(file, folder)
-      const outputPath = path.join(targetDir, rpath)
-
-      fileStart(file)
-      this.extractFile(file, outputPath, progressReport)
-      fileComplete(file)
-    }
-
-    progress?.({
-      current: fileCache.total,
-      currentSize: fileCache.total,
-      extractSize: totalSize,
-      totalSize,
-      extractCount: totalCount,
-      totalCount,
-    })
+    return task
+  }
+  craeteFileReader(file: PZFilePacked) {
+    return createPZDecipherReader(this._source, this._crypto, { file, blockSize: this.blockSize })
   }
 
-  // async methods
-  extractFileAsync(file: PZFilePacked, target: string, frequency?: number) {
-    const targetExists = fs.existsSync(target)
+  private async extractTask(
+    target: string,
+    file: PZFilePacked,
+    cancelToken: CancelToken,
+    progress: PZSubject<DecryptFileProgress>,
+  ) {
+    const { ensureFile } = provider.get('fs-helper')
+    const handle = await ensureFile(target, 'w+')
+    const writtenBytes = await this._crypto.decryptFile(this._source, handle, {
+      position: file.offset,
+      offset: 0,
+      size: file.size,
+      blockSize: this.blockSize,
+      cancelToken,
+      progress,
+    })
+    await handle.close()
+    return writtenBytes
+  }
+  extractFile(file: PZFilePacked, target: string) {
+    const { fileExistsSync } = provider.get('fs-helper')
+    const targetExists = fileExistsSync(target)
     if (targetExists) {
-      throw new FileAlreadyExistsError()
+      throw new PZError(errorCodes.PathAlreadyExists, { path: target })
     }
-    ensureDir(path.parse(target).dir)
 
-    const progressCache: ExtractProgress = {
-      current: 1,
-      currentSize: file.size,
-      extractSize: 0,
-      totalSize: file.size,
+    const progress$ = new PZSubject<DecryptFileProgress>()
+    const [task, cancelToken] = taskManager.create<ExtractProgress>({
+      current: 0,
+      currentSize: file.originSize,
       extractCount: 0,
       totalCount: 1,
-    }
-    const [task, cancelToken] = taskManager.create<ExtractProgress>(progressCache)
-    const progressReport = (p: number) => {
-      progressCache.extractSize = p
-      taskManager.update(task, progressCache)
-    }
+      extractSize: 0,
+      totalSize: file.originSize,
+    })
+    progress$.subscribe((p) => {
+      taskManager.update(task, { current: p.writtenBytes, extractSize: p.writtenBytes })
+    })
 
-    let processedBytes = 0
-    const exec = async () => {
-      const targetFd = await fsOpenAsync(target, 'w')
-      processedBytes = await this.crypto.decryptFileAsync({
-        sourceFd: this.fd,
-        targetFd,
-        position: file.offset,
-        size: file.size,
-        offset: 0,
-        cancelToken,
-        progress: progressReport,
-        frequency,
-      })
-      await fsCloseAsync(targetFd)
-    }
-
-    exec()
-      .then(() => {
-        progressCache.extractSize = processedBytes
-        progressCache.extractCount = 1
-
-        taskManager.update(task, progressCache)
-        taskManager.complete(task)
-      })
+    this.extractTask(target, file, cancelToken, progress$)
+      .then(() => taskManager.complete(task))
       .catch((err) => taskManager.throwError(task, err))
+      .finally(() => {
+        progress$.complete()
+      })
 
     return task
   }
-  extractAllAsync(targetDir: string, frequency?: number) {
-    const indices = this.loadIndex()
-    return this.extractFolderAsync(indices.root, targetDir, frequency)
-  }
-  extractFolderAsync(folder: PZFolder, targetDir: string, frequency?: number) {
-    ensureEmptyDir(targetDir)
-
-    const indices = this.loadIndex()
-    const files = indices.getFilesDeep(folder)
-
-    const progressCache: ExtractProgress = {
-      current: 0,
-      currentSize: 1,
-      extractSize: 0,
-      totalSize: this.statisticExtractSize(files),
-      extractCount: 0,
-      totalCount: files.length,
-    }
-    const [task, cancelToken] = taskManager.create<ExtractProgress>(progressCache)
-
-    const progressReport = (p: number) => {
-      progressCache.current = p
-      taskManager.update(task, {
-        ...progressCache,
-        extractSize: progressCache.extractSize + progressCache.current,
-      })
-    }
-    const fileComplete = (f: PZFilePacked) => {
-      progressCache.extractCount += 1
-      progressCache.extractSize += f.size
-    }
-    const fileStart = (f: PZFilePacked) => {
-      progressCache.current = 0
-      progressCache.currentSize = f.size
-    }
-
-    const exec = async () => {
-      for (const file of files) {
-        const rpath = indices.resolvePath(file, folder)
-        const outputPath = path.join(targetDir, rpath)
-        ensureDir(path.parse(outputPath).dir)
-        const targetFd = await fsOpenAsync(outputPath, 'w')
-
-        fileStart(file)
-        await this.crypto.decryptFileAsync({
-          sourceFd: this.fd,
-          targetFd,
-          position: file.offset,
-          size: file.size,
-          offset: 0,
-          cancelToken,
-          progress: progressReport,
-          frequency,
-        })
-        fileComplete(file)
-        await fsCloseAsync(targetFd)
-        if (cancelToken.canceled) {
-          break
-        }
+  private async checkFilesExists(list: { target: string }[]) {
+    const { fileExists } = provider.get('fs-helper')
+    for (const f of list) {
+      if (await fileExists(f.target)) {
+        throw new PZError(errorCodes.PathAlreadyExists, { path: f.target })
       }
     }
+  }
+  private async extractBatchTasks(
+    list: { file: PZFilePacked; target: string }[],
+    task: AsyncTask<ExtractProgress>,
+    cancelToken: CancelToken,
+  ) {
+    await this.checkFilesExists(list)
 
-    exec()
-      .then(() => {
-        const completeProgress = cancelToken.canceled
-          ? {
-              ...progressCache,
-              extractSize: progressCache.extractSize + progressCache.current,
-            }
-          : progressCache
+    let sumWritten = 0
+    let extractCount = 0
+    const progress$ = new PZSubject<DecryptFileProgress>()
+    progress$.subscribe((p) => {
+      taskManager.update(task, { current: p.writtenBytes, extractSize: sumWritten + p.writtenBytes })
+    })
 
-        taskManager.update(task, completeProgress)
-        taskManager.complete(task)
-      })
+    for (const item of list) {
+      if (cancelToken.canceled) break
+      taskManager.update(task, { current: 0, currentSize: item.file.originSize })
+      const writtenBytes = await this.extractTask(item.target, item.file, cancelToken, progress$)
+      sumWritten += writtenBytes
+      extractCount++
+      taskManager.update(task, { extractCount, extractSize: sumWritten })
+    }
+
+    progress$.complete()
+  }
+  extractBatch(indexLoader: PZIndexLoader, folder: PZFolder, targetDir: string) {
+    const files = indexLoader.getChildrenFiles(folder)
+    let totalOriginSize = 0
+    const list = files.map((file) => {
+      const resolvePath = indexLoader.resolvePath(file, folder)
+      const target = path.join(targetDir, resolvePath)
+      totalOriginSize += file.originSize
+      return { file, target }
+    })
+    const [task, cancelToken] = taskManager.create<ExtractProgress>({
+      current: 0,
+      currentSize: 0,
+      extractCount: 0,
+      totalCount: list.length,
+      extractSize: 0,
+      totalSize: totalOriginSize,
+    })
+
+    this.extractBatchTasks(list, task, cancelToken)
+      .then(() => taskManager.complete(task))
       .catch((err) => taskManager.throwError(task, err))
 
     return task
   }
 
-  close() {
-    if (this._fd) {
-      fs.closeSync(this._fd)
-      this._fd = undefined
-    }
+  async close() {
+    await this._source.close()
   }
 }
 
-const readVersion = (fd: number) => {
-  const buf = Buffer.alloc(4)
-  fs.readSync(fd, buf, 0, 4, 0)
-  const version = buf.readInt32LE(0)
-  return version
+export const checkPZFile = async (source: FileHandle, password: string | Buffer) => {
+  const crypto = createPZCrypto(password)
+  const head = await readFileHead(source)
+  const stats = await source.stat()
+  checkFileHead(head, crypto, stats)
 }
-const checkPZSign = (fd: number) => {
-  const tempBuffer = Buffer.alloc(32)
-  fs.readSync(fd, tempBuffer, 0, 32, 4)
-  return checkSign(tempBuffer)
-}
+export const createPZLoader = async (source: FileHandle, password: string | Buffer) => {
+  const crypto = createPZCrypto(password)
+  const head = await readFileHead(source)
+  const stats = await source.stat()
+  checkFileHead(head, crypto, stats)
 
-export const checkPZPackFile = (fd: number) => {
-  const version = readVersion(fd)
-  if (!isCompatible(version)) {
-    throw new NotSupportedVersionError()
-  }
-  const type = checkPZSign(fd)
-
-  return { version, type }
-}
-export const getPasswordHash = (fd: number) => {
-  const pwhashBuffer = Buffer.alloc(32)
-  fs.readSync(fd, pwhashBuffer, 0, 32, 36)
-  return bytesToHex(pwhashBuffer)
-}
-export const getPZPackFileMate = (filename: string) => {
-  let fd
-  try {
-    fd = fs.openSync(filename, 'r')
-    const { version, type } = checkPZPackFile(fd)
-    const pwHash = getPasswordHash(fd)
-    return { version, type, pwHash }
-  } finally {
-    if (fd) {
-      fs.closeSync(fd)
-    }
-  }
-}
-
-export const OpenPzFile = (filename: string, password: string | Buffer) => {
-  const key = typeof password === 'string' ? createKey(password) : password
-  const pzHandle = new PZLoader(filename, key)
-  return pzHandle
+  return new PZLoader(source, crypto, head)
 }
 export type { PZLoader }
