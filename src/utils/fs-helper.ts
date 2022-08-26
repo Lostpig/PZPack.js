@@ -47,7 +47,7 @@ export const ensureDir = async (dir: string) => {
   }
   return dir
 }
-export const ensureFile = async (file: string, flag: string = 'w+') => {
+export const ensureFile = async (file: string, flag: string) => {
   const exists = await fileExists(file)
   if (!exists) {
     await ensureDir(path.dirname(file))

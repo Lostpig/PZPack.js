@@ -135,6 +135,33 @@ class PZIndexLoader {
     return this.nodes.get(id)
   }
 
+  getFile (fullname: string) {
+    const parts = fullname.replace(/\\/gm, '/').split('/').filter(s => !!s).reverse()
+
+    let folder: PZFolder | undefined = this.root
+    while (parts.length > 1) {
+      if (!folder) return undefined
+      const p = parts.pop()!
+      folder = this.findFolder(folder, p)
+    }
+
+    if (!folder) return undefined
+    const filename = parts.pop()!
+    return this.findFile(folder, filename)
+  }
+  getFolder (fullname: string) {
+    const parts = fullname.replace(/\\/gm, '/').split('/').filter(s => !!s).reverse()
+
+    let folder: PZFolder | undefined = this.root
+    while (parts.length > 0) {
+      if (!folder) return undefined
+      const p = parts.pop()!
+      folder = this.findFolder(folder, p)
+    }
+
+    return folder
+  }
+
   findFile(folder: PZFolder, name: string) {
     const node = this.getNode(folder.id)
     if (node) {
@@ -142,6 +169,14 @@ class PZIndexLoader {
     }
     return undefined
   }
+  findFolder(parent: PZFolder, name: string) {
+    const node = this.getNode(parent.id)
+    if (node) {
+      return node.childFolders.get(name)
+    }
+    return undefined
+  }
+
   getChildren (folder: PZFolder) {
     const node = this.getNode(folder.id)
     if (node) {

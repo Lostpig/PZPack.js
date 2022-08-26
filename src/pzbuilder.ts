@@ -178,8 +178,8 @@ const execBuild = async (context: BuildContext) => {
   const { ensureFile, removeFile, renameFile } = provider.get('fs-helper')
 
   const tempFile = target + '.pztemp'
-  const targetHandle = await ensureFile(target)
-  const tempHandle = await ensureFile(tempFile)
+  const targetHandle = await ensureFile(target, 'wx')
+  const tempHandle = await ensureFile(tempFile, 'wx')
 
   const indexStore = createIndexStore(indices)
   const sumTotalSize = indexStore.fileStore.reduce((p, c) => p + c.originSize, 0)
@@ -204,7 +204,7 @@ const execBuild = async (context: BuildContext) => {
   for (const f of indexStore.fileStore) {
     if (cancelToken.canceled) break
 
-    const sourceHandle = await ensureFile(f.source)
+    const sourceHandle = await ensureFile(f.source, 'r')
     const sourceStat = await sourceHandle.stat()
     taskManager.update(task, { currentWrittenBytes: 0, currentTotalBytes: sourceStat.size })
 

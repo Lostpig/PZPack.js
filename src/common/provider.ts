@@ -7,7 +7,7 @@ export interface FSHelperModule {
   dirExists: (dir: string) => Promise<boolean>
   fileExists: (file: string) => Promise<boolean>
   ensureDir: (dir: string) => Promise<string | undefined>
-  ensureFile: (file: string, flag?: string) => Promise<FileHandle>
+  ensureFile: (file: string, flag: string) => Promise<FileHandle>
   renameFile: (oldPath: string, newPath: string) => Promise<void>
   removeFile: (oldPath: string) => Promise<void>
   fileExistsSync: (file: string) => boolean

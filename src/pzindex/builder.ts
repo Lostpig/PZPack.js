@@ -261,20 +261,18 @@ export class PZIndexBuilder {
     return { files, folders }
   }
 }
+
+type serializeData = {
+  items: { files: PZFileBuilding[]; folders: PZFolder[] }
+}
 export const serializePZIndexBuilder = (indexBuilder: PZIndexBuilder) => {
   const items = indexBuilder.getAll()
   return JSON.stringify({ items })
 }
 export const deserializePZIndexBuilder = (json: string) => {
-  const data = JSON.parse(json) as { items: (PZFileBuilding | PZFolder)[] }
+  const data = JSON.parse(json) as serializeData
   const idxBuilder = new PZIndexBuilder()
-
-  const files: PZFileBuilding[] = []
-  const folders: PZFolder[] = []
-  for (const item of data.items) {
-    if (isFile(item)) files.push(item)
-    else if (isFolder(item)) folders.push(item)
-  }
+  const { files, folders } = data.items
 
   const pidMap = new Map<number, number>()
   const rebuildFolders = (folder: PZFolder) => {

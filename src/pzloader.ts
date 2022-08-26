@@ -87,11 +87,23 @@ const checkFileHead = (head: PZFileHead, crypto: PZCrypto, fileStat: Stats) => {
     throw new PZError(errorCodes.FileSizeCheckFailed, { size: head.fileSize })
   }
 }
+const loadFileIndex = async (source: FileHandle, head: PZFileHead, crypto: PZCrypto) => {
+  const encryptedBuf = Buffer.alloc(head.indexSize)
+  await source.read({
+    buffer: encryptedBuf, 
+    offset: 0,
+    position: 92,
+    length: head.indexSize
+  })
+  const indexData = crypto.decryptBlock(encryptedBuf)
+  return craeteIndexLoader(indexData)
+}
 
 class PZLoader {
   private _head: PZFileHead
   private _crypto: PZCrypto
   private _source: FileHandle
+  private _index: PZIndexLoader
 
   get version() {
     return this._head.version
@@ -105,23 +117,15 @@ class PZLoader {
   get createTime() {
     return this._head.createTime
   }
+  get index () {
+    return this._index
+  }
 
-  constructor(source: FileHandle, crypto: PZCrypto, head: PZFileHead) {
+  constructor(source: FileHandle, crypto: PZCrypto, head: PZFileHead, index: PZIndexLoader) {
     this._crypto = crypto
     this._source = source
     this._head = head
-  }
-
-  async getIndex() {
-    const encryptedBuf = Buffer.alloc(this._head.indexSize)
-    await this._source.read({
-      buffer: encryptedBuf, 
-      offset: 0,
-      position: 92,
-      length: this._head.indexSize
-    })
-    const indexData = this._crypto.decryptBlock(encryptedBuf)
-    return craeteIndexLoader(indexData)
+    this._index = index
   }
 
   async loadFile(file: PZFilePacked) {
@@ -164,7 +168,7 @@ class PZLoader {
     progress: PZSubject<DecryptFileProgress>,
   ) {
     const { ensureFile } = provider.get('fs-helper')
-    const handle = await ensureFile(target, 'w+')
+    const handle = await ensureFile(target, 'wx')
     const writtenBytes = await this._crypto.decryptFile(this._source, handle, {
       position: file.offset,
       offset: 0,
@@ -238,11 +242,11 @@ class PZLoader {
 
     progress$.complete()
   }
-  extractBatch(indexLoader: PZIndexLoader, folder: PZFolder, targetDir: string) {
-    const files = indexLoader.getChildrenFiles(folder)
+  extractBatch(folder: PZFolder, targetDir: string) {
+    const files = this.index.getChildrenFiles(folder)
     let totalOriginSize = 0
     const list = files.map((file) => {
-      const resolvePath = indexLoader.resolvePath(file, folder)
+      const resolvePath = this.index.resolvePath(file, folder)
       const target = path.join(targetDir, resolvePath)
       totalOriginSize += file.originSize
       return { file, target }
@@ -279,7 +283,8 @@ export const createPZLoader = async (source: FileHandle, password: string | Buff
   const head = await readFileHead(source)
   const stats = await source.stat()
   checkFileHead(head, crypto, stats)
+  const index = await loadFileIndex(source, head, crypto)
 
-  return new PZLoader(source, crypto, head)
+  return new PZLoader(source, crypto, head, index)
 }
 export type { PZLoader }

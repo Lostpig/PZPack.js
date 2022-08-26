@@ -29,7 +29,7 @@ const testLoader = async () => {
 
   const source = fileStore.get('xx/xx.papk')!
   const loader = await createPZLoader(source as any, '123456')
-  const indexLoader = await loader.getIndex()
+  const indexLoader = loader.index
 
   const folders = indexLoader.getChildrenFolders(indexLoader.root)
   const folderX = folders.find((f) => f.fullname === 'xxx')

@@ -55,11 +55,11 @@ const ctx = getContext()
 const algorithm = 'aes-256-cbc'
 const ivSize = 16
 
-const createKey = (password: string) => {
+export const createKey = (password: string) => {
   const key = sha256(password)
   return key
 }
-const createKeyHash = (key: Buffer) => {
+export const createKeyHash = (key: Buffer) => {
   const hash = sha256(sha256Hex(key))
   const hex = bytesToHex(hash)
   return { hash, hex }
