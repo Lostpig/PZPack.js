@@ -12,6 +12,7 @@ export interface PZFolder {
   readonly fullname: string
 }
 export interface PZFilePacked extends PZFileBase {
+  readonly fid: number
   readonly offset: number
   readonly originSize: number
 }

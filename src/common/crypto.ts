@@ -227,7 +227,13 @@ class PZDecipherReader {
     this.encryptedBlockSize = (16 - this.blockSize % 16) + this.blockSize + 16
   }
 
+
+  private blockCache?: { block: number, data: Buffer } = undefined
   private async readBlock (block: number) {
+    if (this.blockCache?.block === block) {
+      return this.blockCache.data
+    }
+
     const currentOffset = this.encryptedBlockSize * block
     const readLength = Math.min(this.bindingFile.size - currentOffset, this.encryptedBlockSize)
     const start = this.bindingFile.offset + this.encryptedBlockSize * block
@@ -241,6 +247,8 @@ class PZDecipherReader {
     })
 
     const decryptBuffer = this.crypto.decryptBlock(blockBuffer)
+
+    this.blockCache = { block, data: decryptBuffer }
     return decryptBuffer
   }
   async read(start: number, end?: number) {
@@ -257,6 +265,7 @@ class PZDecipherReader {
     let resultOffset = 0
     for (let i = startBlock; i <= endBlock; i++) {
       const decryptBuf = await this.readBlock(i)
+
       if (i === startBlock) {
         decryptBuf.copy(resultBuf, resultOffset, startBlockOffset)
         resultOffset += decryptBuf.length - startBlockOffset
@@ -269,7 +278,23 @@ class PZDecipherReader {
       }
     }
 
-    ctx.logger?.debug(`paramter length = ${_end - start}, real load length = ${resultOffset}`)
+    ctx.logger?.debug(`paramter length = ${_end - start}, last offset = ${resultOffset}`)
+    return resultBuf
+  }
+  async readByBlock(start: number, end?: number) {
+    const _end = (end === undefined || end > this.bindingFile.originSize) ? this.bindingFile.originSize : end
+    if (start > _end) throw new RangeError()
+    if (start === end) return Buffer.alloc(0)
+
+    const startBlock = Math.floor(start / this.blockSize)
+    const startBlockOffset = start - startBlock * this.blockSize
+    const resultSize = Math.min(_end - start, this.blockSize - start % this.blockSize)
+
+    const resultBuf = Buffer.alloc(resultSize)
+    const decryptBuf = await this.readBlock(startBlock)
+    decryptBuf.copy(resultBuf, 0, startBlockOffset)
+
+    ctx.logger?.debug(`block: paramter length = ${_end - start}, real load length = ${resultSize}`)
     return resultBuf
   }
 }

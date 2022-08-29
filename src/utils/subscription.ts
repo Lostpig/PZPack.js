@@ -2,55 +2,47 @@ export type Subscription = {
   closed: boolean
   unsubscribe: () => void
 }
-export type SubjectHandle<T> = {
+type completeFunc<R = undefined> = (result: NonNullable<R>) => void
+export type SubjectHandle<T, R = undefined> = {
   next?: (param: T) => void
   error?: (e: Error) => void
-  complete?: () => void
+  complete?: completeFunc<R>
   subscription: Subscription
 }
-export interface PZObservable<T> {
+export interface PZObservable<T, R = undefined> {
   closed: boolean
   status: 'active' | 'error' | 'complete'
-  subscribe: (next?: (param: T) => void, err?: (e: Error) => void, complete?: () => void) => Subscription
+  subscribe: (next?: (param: T) => void, err?: (e: Error) => void, complete?: completeFunc<R>) => Subscription
 }
-export interface PZBehaviorObservable<T> extends PZObservable<T> {
+export interface PZBehaviorObservable<T, R = undefined> extends PZObservable<T, R> {
   readonly current: T
 }
 
 const closedUnsubscribeFunc = () => {}
-type SubscribeWrapper<T> = (fn: (param: T) => void) => (param: T) => void
-class PZObserver<T, R extends PZObservable<T>> implements PZBehaviorObservable<T> {
-  private innerObservable: R
-  private wrapper?: SubscribeWrapper<T>
-  constructor (innerObservable: R, subscribeWrapper?: SubscribeWrapper<T>) {
-    this.innerObservable = innerObservable
-    this.wrapper = subscribeWrapper
-  }
-  get status () {
-    return this.innerObservable.status
-  }
-  get closed () {
-    return this.innerObservable.closed
-  }
-  get current () {
-    return (this.innerObservable as never as PZBehaviorObservable<T>).current
+type NextFuncWrapper<T> = (fn: (param: T) => void) => (param: T) => void
+const createPipedObservable = <T, R, O extends PZObservable<T, R> = PZObservable<T, R>>(origin: O, wrapper?: NextFuncWrapper<T>) => {
+  const originSubscribe = origin.subscribe
+  const wrappedSubscribe = (next?: (param: T) => void, error?: (e: Error) => void, complete?: completeFunc<R>) => {
+    const wrappedNext = next && wrapper ? wrapper(next) : next
+    return originSubscribe.call(origin, wrappedNext, error, complete)
   }
 
-  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
-    const wrappedNext = (next && this.wrapper) ? this.wrapper(next) : next
-    const res = this.innerObservable.subscribe(wrappedNext, error, complete)
-    return res
-  }
+  return new Proxy(origin, {
+    get: (target, prop, receiver) => {
+      if (prop === 'subscribe') return wrappedSubscribe
+      else return Reflect.get(target, prop, receiver)
+    }
+  })
 }
 
-export class PZSubject<T> implements PZObservable<T> {
-  handles = new Map<symbol, SubjectHandle<T>>()
+export class PZSubject<T, R = undefined> implements PZObservable<T, R> {
+  private handles = new Map<symbol, SubjectHandle<T, R>>()
   get closed() {
     return this.status != 'active'
   }
   status: 'active' | 'error' | 'complete' = 'active'
 
-  private addHandle(symbol: symbol, handle: SubjectHandle<T>) {
+  private addHandle(symbol: symbol, handle: SubjectHandle<T, R>) {
     this.handles.set(symbol, handle)
   }
   private removeHandle(symbol: symbol) {
@@ -63,15 +55,17 @@ export class PZSubject<T> implements PZObservable<T> {
     }
   }
   private innerError?: Error
+  private innerResult?: R
 
   next(param: T) {
     for (const handle of this.handles.values()) {
       handle.next?.(param)
     }
   }
-  complete() {
+  complete(result: R extends undefined ? void : R): void {
+    this.innerResult = (result as R) ?? undefined
     for (const handle of this.handles.values()) {
-      handle.complete?.()
+      handle.complete?.(this.innerResult!)
       handle.subscription.closed = true
       handle.subscription.unsubscribe = closedUnsubscribeFunc
     }
@@ -91,13 +85,13 @@ export class PZSubject<T> implements PZObservable<T> {
     this.innerError = err
   }
 
-  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: completeFunc<R>) {
     if (this.closed) {
       if (this.status == 'error' && error) {
         error(this.innerError || new Error())
       }
       if (this.status == 'complete' && complete) {
-        complete()
+        complete(this.innerResult!)
       }
 
       return {
@@ -118,10 +112,10 @@ export class PZSubject<T> implements PZObservable<T> {
     return subscription
   }
   toObservable() {
-    return new PZObserver(this) as PZObservable<T>
+    return createPipedObservable<T, R>(this)
   }
 }
-export class PZBehaviorSubject<T> extends PZSubject<T> {
+export class PZBehaviorSubject<T, R = undefined> extends PZSubject<T, R> implements PZBehaviorObservable<T, R> {
   private _currentValue: T
 
   get current() {
@@ -136,28 +130,33 @@ export class PZBehaviorSubject<T> extends PZSubject<T> {
     if (!this.closed) this._currentValue = param
     super.next(param)
   }
-  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: () => void) {
+  subscribe(next?: (param: T) => void, error?: (e: Error) => void, complete?: completeFunc<R>) {
     const res = super.subscribe(next, error, complete)
     if (!this.closed) next?.(this.current)
     return res
   }
   toObservable() {
-    return new PZObserver(this) as PZBehaviorObservable<T>
+    return createPipedObservable<T, R, PZBehaviorObservable<T, R>>(this)
   }
 }
-export const waitObservable = (observable: PZObservable<unknown>) => {
+export const waitObservable = <T, R>(observable: PZObservable<T, R>) => {
   return new Promise<void>((res, rej) => {
-    const subscrition = observable.subscribe(undefined, (e) => {
-      subscrition.unsubscribe()
-      rej(e)
-    }, () => {
-      subscrition.unsubscribe()
-      res()
-    })
+    const subscrition = observable.subscribe(
+      undefined,
+      (e) => {
+        subscrition.unsubscribe()
+        rej(e)
+      },
+      () => {
+        subscrition.unsubscribe()
+        res()
+      },
+    )
   })
 }
-export const frequencyPipe = <T, O extends PZObservable<T>>(observable: O, interval: number) => {
-  const wrapper: SubscribeWrapper<T> = (fn) => {
+
+export const frequencyPipe = <T, R, O extends PZObservable<T, R>>(observable: O, interval: number) => {
+  const wrapper: NextFuncWrapper<T> = (fn) => {
     let last = 0
     return (p: T) => {
       const now = Date.now()
@@ -167,5 +166,5 @@ export const frequencyPipe = <T, O extends PZObservable<T>>(observable: O, inter
       }
     }
   }
-  return new PZObserver(observable, wrapper) as never as O
+  return createPipedObservable(observable, wrapper)
 }

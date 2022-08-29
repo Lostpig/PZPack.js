@@ -1,5 +1,5 @@
 import { errorCodes, PZError } from '../exceptions'
-import { PZBehaviorSubject } from './subscription'
+import { PZBehaviorSubject, waitObservable } from './subscription'
 
 export interface TaskCompleteReport<T> {
   value?: T
@@ -7,7 +7,7 @@ export interface TaskCompleteReport<T> {
 }
 interface TaskContext<T> {
   canceler: AsyncCanceler
-  subject: PZBehaviorSubject<T>
+  subject: PZBehaviorSubject<T, T>
 }
 export interface CancelToken {
   readonly canceled: boolean
@@ -58,10 +58,13 @@ class AsyncCanceler {
       },
     }
   }
+  clear () {
+    this.handlers.clear()
+  }
 }
 
 const create = <T>(initState: T): [AsyncTask<T>, CancelToken] => {
-  const subject = new PZBehaviorSubject(initState)
+  const subject = new PZBehaviorSubject<T, T>(initState)
   const canceler = new AsyncCanceler()
   const task = new AsyncTask<T>()
 
@@ -71,6 +74,7 @@ const create = <T>(initState: T): [AsyncTask<T>, CancelToken] => {
   }
   store.set(task, context)
 
+  waitObservable(subject).finally(() => canceler.clear())
   const cancelToken = canceler.getToken()
   return [task, cancelToken]
 }
@@ -91,7 +95,7 @@ const throwError = <T>(task: AsyncTask<T>, err: Error) => {
 const complete = <T>(task: AsyncTask<T>) => {
   const context = store.get(task)
   if (context) {
-    context.subject.complete()
+    context.subject.complete(context.subject.current)
   }
 }
 

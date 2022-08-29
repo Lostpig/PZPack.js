@@ -7,6 +7,7 @@ import { errorCodes, PZError } from '../exceptions'
 const createPZFilePacked = (
   name: string,
   fullname: string,
+  fid: number,
   pid: number,
   offset: number,
   size: number,
@@ -17,6 +18,7 @@ const createPZFilePacked = (
     name,
     fullname,
     ext,
+    fid,
     pid,
     offset,
     size,
@@ -100,15 +102,16 @@ const decodeIndexBytes = (data: Buffer) => {
   offset = 0
   while (offset < filesBuf.byteLength) {
     const chunkSize = filesBuf.readInt32LE(offset)
-    const pid = filesBuf.readInt32LE(offset + 4)
-    const fileOffset = Number(filesBuf.readBigInt64LE(offset + 8))
-    const fileSize = Number(filesBuf.readBigInt64LE(offset + 16))
-    const originSize = Number(filesBuf.readBigInt64LE(offset + 24))
-    const name = filesBuf.toString('utf8', offset + 32, offset + chunkSize)
+    const fid = filesBuf.readInt32LE(offset + 4)
+    const pid = filesBuf.readInt32LE(offset + 8)
+    const fileOffset = Number(filesBuf.readBigInt64LE(offset + 12))
+    const fileSize = Number(filesBuf.readBigInt64LE(offset + 20))
+    const originSize = Number(filesBuf.readBigInt64LE(offset + 28))
+    const name = filesBuf.toString('utf8', offset + 36, offset + chunkSize)
 
     const parentNode = getNode(pid)
     const fullname = path.join(parentNode.folder.fullname, name)
-    const file = createPZFilePacked(name, fullname, pid, fileOffset, fileSize, originSize)
+    const file = createPZFilePacked(name, fullname, fid, pid, fileOffset, fileSize, originSize)
     parentNode.childFiles.set(file.name, file)
 
     offset += chunkSize
@@ -126,13 +129,27 @@ class PZIndexLoader {
     return this.nodes.get(folderRootId)!.folder
   }
 
+  private files: Map<number, PZFilePacked>
   private nodes: Map<number, PZIndexNode>
   constructor(nodes: Map<number, PZIndexNode>) {
     this.nodes = nodes
+    this.files = new Map()
+    this.createFilesCache()
   }
-
+  private createFilesCache () {
+    for (const node of this.nodes.values()) {
+      node.childFiles.forEach(f => this.files.set(f.fid, f))
+    }
+  }
   private getNode (id: number) {
     return this.nodes.get(id)
+  }
+
+  fileOfId(id: number) {
+    return this.files.get(id)
+  }
+  folderOfIf(id: number) {
+    return this.nodes.get(id)?.folder
   }
 
   getFile (fullname: string) {

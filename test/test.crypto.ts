@@ -85,6 +85,7 @@ const testDecipherReader = async () => {
     name: 'aaa',
     fullname: 'bbb',
     ext: 'ccc',
+    fid: 1,
     pid: 2,
     size: simTarget.size,
     offset: 0,
@@ -92,11 +93,26 @@ const testDecipherReader = async () => {
   }
   const reader = createPZDecipherReader(simTarget as any, crypto, { file: fff, blockSize: bsz })
 
-  const readBuffer = await reader.read(207500)
-  const sliceBuffer = sourceBuf.slice(207500)
+  const testStart = 17909
+  const testEnd = simSource.size
+
+  const readBuffer = await reader.read(testStart, testEnd)
+  const bbs: Buffer[] = []
+  let s = testStart
+  while (s < testEnd) {
+    const readBufferB = await reader.readByBlock(s, testEnd)
+    bbs.push(readBufferB)
+    s+=readBufferB.length
+  }
+  const z = Buffer.concat(bbs)
+  console.log('z length = ' + z.length)
+
+  const sliceBuffer = sourceBuf.slice(testStart, testEnd)
 
   const isEqual = equalBuffer(readBuffer, sliceBuffer)
+  const isEqualB = equalBuffer(z, sliceBuffer)
   assert(isEqual, `Crypto DecipherReader check failed: readed buffer and source buffer is not equal`)
+  assert(isEqualB, `Crypto DecipherReader check failed: readed buffer by block and source buffer is not equal`)
 
   console.log('testDecipherReader complete')
 }

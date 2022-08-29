@@ -44,6 +44,7 @@ interface BuildContext {
 }
 interface PZFileEncoder {
   chunk: number
+  fid: number
   pid: number
   offset: number
   size: number
@@ -61,13 +62,18 @@ interface PZFolderEncoder {
 const createIndexStore = (idxBuilder: PZIndexBuilder) => {
   const fileStore: PZFileEncoder[] = []
   const folderStore: PZFolderEncoder[] = []
+  const fidCounter = (() => {
+    let i = 1
+    return () => i++
+  })()
 
   let totalSize = 8
   const { files, folders } = idxBuilder.getAll()
   for (const file of files) {
     const nameBuffer = Buffer.from(file.name, 'utf8')
     const fe: PZFileEncoder = {
-      chunk: nameBuffer.length + 32,
+      chunk: nameBuffer.length + 36,
+      fid: fidCounter(),
       pid: file.pid,
       offset: 0,
       size: 0,
@@ -154,11 +160,12 @@ const writeIndex = async (handle: FileHandle, crypto: PZCrypto, indexStore: Retu
   let filePartSize = 0
   for (const file of fileStore) {
     contentBuffer.writeInt32LE(file.chunk, offset)
-    contentBuffer.writeInt32LE(file.pid, offset + 4)
-    contentBuffer.writeBigInt64LE(BigInt(file.offset), offset + 8)
-    contentBuffer.writeBigInt64LE(BigInt(file.size), offset + 16)
-    contentBuffer.writeBigInt64LE(BigInt(file.originSize), offset + 24)
-    contentBuffer.set(file.name, offset + 32)
+    contentBuffer.writeInt32LE(file.fid, offset + 4)
+    contentBuffer.writeInt32LE(file.pid, offset + 8)
+    contentBuffer.writeBigInt64LE(BigInt(file.offset), offset + 12)
+    contentBuffer.writeBigInt64LE(BigInt(file.size), offset + 20)
+    contentBuffer.writeBigInt64LE(BigInt(file.originSize), offset + 28)
+    contentBuffer.set(file.name, offset + 36)
 
     offset += file.chunk
     filePartSize += file.chunk

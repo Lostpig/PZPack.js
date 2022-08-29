@@ -23,6 +23,6 @@ export class PZError extends Error {
   }
 }
 export const isPZError = (err: Error): err is PZError => {
-  if ((err as never as PZError).__pzerror__ === true) return true
+  if ((err as never as PZError)?.__pzerror__ === true) return true
   return false
 }
