@@ -148,7 +148,7 @@ class PZIndexLoader {
   fileOfId(id: number) {
     return this.files.get(id)
   }
-  folderOfIf(id: number) {
+  folderOfId(id: number) {
     return this.nodes.get(id)?.folder
   }
 
