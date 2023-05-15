@@ -3,7 +3,7 @@ import type { Stats } from 'fs'
 import * as path from 'path'
 
 import { bytesToHex } from './utils/utils'
-import { type PZCrypto, type DecryptFileProgress, createPZDecipherReader, createPZCrypto } from './common/crypto'
+import { type PZCrypto, type DecryptFileProgress, createPZDecipherReader, createPZCrypto, createKey, createKeyHash } from './common/crypto'
 import { compatibleVersions, pzSign } from './common/contants'
 import { provider } from './common/provider'
 import { PZError, errorCodes } from './exceptions'
@@ -120,12 +120,21 @@ class PZLoader {
   get index () {
     return this._index
   }
+  get passwordHash() {
+    return this._head.passwordHash
+  }
 
   constructor(source: FileHandle, crypto: PZCrypto, head: PZFileHead, index: PZIndexLoader) {
     this._crypto = crypto
     this._source = source
     this._head = head
     this._index = index
+  }
+  checkPassword(password: string | Buffer) {
+    const key = typeof password === 'string' ? createKey(password): password
+    const keyhash = createKeyHash(key)
+
+    return keyhash.hex === this._head.passwordHash
   }
 
   async loadFile(file: PZFilePacked) {

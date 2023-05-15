@@ -12,7 +12,7 @@ export enum LogLevel {
 const levelPrefix: Record<LogLevel, string> = {
   [LogLevel.DEBUG]: '[DEBUG]',
   [LogLevel.INFO]: '[INFO]',
-  [LogLevel.WARNING]: '[WARNING]',
+  [LogLevel.WARNING]: '[WARN]',
   [LogLevel.ERROR]: '[ERROR]',
   [LogLevel.SILENT]: '[SILENT]',
 }
